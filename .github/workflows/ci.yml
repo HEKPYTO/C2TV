@@ -106,5 +106,21 @@ jobs:
           test "$code" -eq 2
           rg -q TV0011 "$tmp/out.json"
 
+      - name: Missing lock check
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir "$tmp/fixtures"
+          cp -R fixtures/. "$tmp/fixtures/"
+          rm "$tmp/fixtures/digests.toml"
+          set +e
+          cargo run --offline -- self-test --fixtures "$tmp/fixtures" --json > "$tmp/out.json" 2>&1
+          code=$?
+          set -e
+          cat "$tmp/out.json"
+          test "$code" -eq 2
+          rg -q TV0011 "$tmp/out.json"
+
       - name: Reject comments in sources
         run: ./scripts/check-comments.sh
