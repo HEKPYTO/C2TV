@@ -114,6 +114,82 @@ fn c2tv(args: &[&str]) -> (i32, String, String) {
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
 }
+
+fn probe_c2rust(program: &str) -> Result<bool, String> {
+    match Command::new(program)
+        .args(["transpile", "--version"])
+        .output()
+    {
+        Ok(output) => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if output.status.success() && version == "transpile 0.22.1" {
+                Ok(true)
+            } else {
+                Err(format!("expected transpile 0.22.1, got {version}"))
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("cannot start {program}: {error}")),
+    }
+}
+
+fn require_c2rust(test: &str) -> bool {
+    match probe_c2rust("c2rust") {
+        Ok(true) => true,
+        Ok(false) => {
+            println!("SKIP {test}: c2rust transpile unavailable");
+            false
+        }
+        Err(message) => panic!("{message}"),
+    }
+}
+
+#[cfg(unix)]
+fn path_without_c2rust() -> PathBuf {
+    let root = sandbox("no-c2rust-path");
+    let mut bins = Vec::new();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for (index, directory) in std::env::split_paths(&path).enumerate() {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        let bin = root.join(format!("bin{index}"));
+        fs::create_dir_all(&bin).unwrap();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_str() == Some("c2rust") || !entry.path().is_file() {
+                continue;
+            }
+            std::os::unix::fs::symlink(entry.path(), bin.join(name)).unwrap();
+        }
+        bins.push(bin);
+    }
+    std::env::join_paths(bins).unwrap().into()
+}
+
+#[cfg(not(unix))]
+fn path_without_c2rust() -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let bins: Vec<PathBuf> = std::env::split_paths(&path)
+        .filter(|directory| {
+            !directory.join("c2rust").is_file() && !directory.join("c2rust.exe").is_file()
+        })
+        .collect();
+    std::env::join_paths(bins).unwrap_or_default().into()
+}
+
+#[cfg(unix)]
+#[test]
+fn unusable_transpiler_fails_instead_of_skipping() {
+    let root = sandbox("unusable-c2rust");
+    let program = root.join("c2rust");
+    fs::write(&program, b"not executable").unwrap();
+    assert_eq!(
+        probe_c2rust(root.join("absent-c2rust").to_str().unwrap()),
+        Ok(false)
+    );
+    assert!(probe_c2rust(program.to_str().unwrap()).is_err());
+}
 fn lock_fixtures(root: &Path) {
     let (code, _, stderr) = c2tv(&["lock", "--fixtures", root.to_str().unwrap()]);
     assert_eq!(code, 0, "stderr={stderr}");
@@ -237,6 +313,9 @@ fn duplicate_ids_across_kinds_fail_closed() {
 
 #[test]
 fn transpile_crc32_matches_c_and_is_deterministic() {
+    if !require_c2rust("transpile_crc32_matches_c_and_is_deterministic") {
+        return;
+    }
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
         .join("good")
@@ -272,6 +351,9 @@ fn transpile_crc32_matches_c_and_is_deterministic() {
 
 #[test]
 fn self_test_transpile_runs_flagged_fixtures() {
+    if !require_c2rust("self_test_transpile_runs_flagged_fixtures") {
+        return;
+    }
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
         .to_str()
@@ -316,8 +398,7 @@ fn missing_transpiler_fails_transpile_self_test_closed() {
         .to_str()
         .unwrap()
         .to_string();
-    let empty_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/integration-empty-path");
-    fs::create_dir_all(&empty_path).unwrap();
+    let path = path_without_c2rust();
     let output = Command::new(env!("CARGO_BIN_EXE_c2tv"))
         .args([
             "self-test",
@@ -326,12 +407,13 @@ fn missing_transpiler_fails_transpile_self_test_closed() {
             &fixtures,
             "--json",
         ])
-        .env("PATH", &empty_path)
+        .env("PATH", &path)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("TV0016"), "stdout={stdout}");
+    assert!(stdout.contains("TV0014"), "stdout={stdout}");
 }
 #[test]
 fn check_one_fixture_with_full_lock_passes() {
