@@ -156,18 +156,36 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    struct TempScript(PathBuf);
+
+    impl Drop for TempScript {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for TempScript {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-    fn script(text: &str) -> PathBuf {
+    fn script(text: &str) -> TempScript {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("c2tv-script-{}-{id}.sh", std::process::id()));
-        let _ = fs::write(&path, format!("#!/bin/sh\n{text}\n"));
+        let staged = path.with_extension("tmp");
+        let _ = fs::write(&staged, format!("#!/bin/sh\ncat >/dev/null\n{text}\n"));
+        let _ = fs::rename(&staged, &path);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o700));
         }
-        path
+        TempScript(path)
     }
 
     #[test]

@@ -14,7 +14,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 const EXPECTED_VERSION: &str = "transpile 0.22.1";
-const SFILEX_STRUCT: &str = "#[repr(C)]\npub struct __sFILEX {\n    _private: [u8; 0],\n}\n";
 const GENERATED_FILES: [&str; 4] = ["Cargo.toml", "build.rs", "lib.rs", "src/main.rs"];
 
 pub struct LaneResult {
@@ -111,29 +110,57 @@ fn strip_features(text: &str) -> String {
         .collect()
 }
 
+fn extern_type_name(line: &str) -> Option<&str> {
+    let name = line.strip_prefix("pub type ")?.strip_suffix(';')?.trim();
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|character| !character.is_ascii_alphanumeric() && character != '_')
+    {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 fn replace_sfilex(text: &str, fixture: &str) -> Result<String, Diagnostic> {
     let mut lines: Vec<String> = Vec::new();
-    let mut replacements = 0;
+    let mut names: Vec<String> = Vec::new();
+    let mut sfilex = 0;
     for line in text.split_inclusive('\n') {
-        if line.trim() == "pub type __sFILEX;" {
-            replacements += 1;
+        let trimmed = line.trim();
+        if let Some(name) = extern_type_name(trimmed) {
+            if name == "__sFILEX" {
+                sfilex += 1;
+            }
+            names.push(name.to_string());
             continue;
         }
         lines.push(line.to_string());
     }
-    if replacements != 1 {
+    if sfilex > 1 {
         return Err(transpile_error(
             fixture,
-            format!("expected one __sFILEX extern type, found {replacements}"),
+            format!("expected at most one __sFILEX extern type, found {sfilex}"),
         ));
+    }
+    if names.is_empty() {
+        return Ok(text.to_string());
     }
     let insertion = lines
         .iter()
         .position(|line| line.trim() == "extern \"C\" {")
         .ok_or_else(|| transpile_error(fixture, "no extern block for __sFILEX replacement"))?;
+    let mut structs = Vec::new();
+    for name in &names {
+        structs.push("#[repr(C)]".to_string());
+        structs.push(format!("pub struct {name} {{"));
+        structs.push("    _private: [u8; 0],".to_string());
+        structs.push("}".to_string());
+    }
     lines.splice(
         insertion..insertion,
-        SFILEX_STRUCT.lines().map(|line| format!("{line}\n")),
+        structs.into_iter().map(|line| format!("{line}\n")),
     );
     Ok(lines.concat())
 }
@@ -795,9 +822,35 @@ mod tests {
     fn replaces_sfilex_extern_type() {
         let text = "extern \"C\" {\n    pub type __sFILEX;\n    static mut X: i32;\n}\n";
         let result = replace_sfilex(text, "f").unwrap();
-        assert!(result.starts_with(SFILEX_STRUCT));
+        assert!(
+            result.starts_with("#[repr(C)]\npub struct __sFILEX {\n    _private: [u8; 0],\n}\n")
+        );
         assert!(result.contains("extern \"C\" {\n    static mut X: i32;\n}\n"));
         assert!(!result.contains("pub type __sFILEX;"));
+    }
+
+    #[test]
+    fn missing_sfilex_extern_type_is_untouched() {
+        let text = "extern \"C\" {\n    static mut X: i32;\n}\n";
+        assert_eq!(replace_sfilex(text, "f").unwrap(), text);
+    }
+
+    #[test]
+    fn multiple_sfilex_extern_types_are_typed() {
+        let text = "extern \"C\" {\n    pub type __sFILEX;\n    pub type __sFILEX;\n}\n";
+        let error = replace_sfilex(text, "f").unwrap_err();
+        assert_eq!(error.code, "TV0017");
+        assert_eq!(error.exit_class, diag::ExitClass::ToolError);
+        assert!(error.message.contains("found 2"));
+    }
+
+    #[test]
+    fn other_extern_types_are_replaced_without_sfilex() {
+        let text = "extern \"C\" {\n    pub type _IO_marker;\n    static mut X: i32;\n}\n";
+        let result = replace_sfilex(text, "f").unwrap();
+        assert!(result.contains("#[repr(C)]\npub struct _IO_marker {"));
+        assert!(!result.contains("pub type _IO_marker;"));
+        assert!(!result.contains("pub struct __sFILEX"));
     }
 
     #[test]
