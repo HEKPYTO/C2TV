@@ -46,10 +46,11 @@ Validate the transpiled artifact itself (requires `c2rust` 0.22.1):
 cargo run --offline -- self-test --transpile --fixtures fixtures
 ```
 
-The lane transpiles the declared fixtures, strips compiler-specific features,
-rebuilds with stable Rust at the matched optimisation level, runs the same
-corpus, and compares the transpiled binary with the C reference. A missing or
-mismatched transpiler is exit 2, never a skip.
+The lane transpiles five fixtures — crc32, base64, AES-128, SHA-256, and QOI —
+strips compiler-specific features, rebuilds with stable Rust at the matched
+optimisation level, runs the same corpus, and compares the transpiled binary
+with the C reference. It also compares the rebuilt binary hash across two
+independent builds. A missing or mismatched transpiler is exit 2, never a skip.
 
 Exit codes: `0` all expected verdicts, `1` divergence or expectation failure,
 `2` tool error. A missing compiler, malformed manifest, corrupt lock, or protocol
