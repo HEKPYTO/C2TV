@@ -1,0 +1,6 @@
+schema = 1
+id = "atoi_sat"
+kind = "good"
+classes = ["ret", "err"]
+expected = "pass"
+note = "Decimal ASCII parsing saturates at i32 bounds and rejects malformed strings."

@@ -1,0 +1,6 @@
+schema = 1
+id = "crc32"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "CRC-32 IEEE reflected polynomial over raw payload bytes"

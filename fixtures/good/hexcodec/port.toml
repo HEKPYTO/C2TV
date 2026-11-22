@@ -1,0 +1,6 @@
+schema = 1
+id = "hexcodec"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "Lowercase hex encode and strict hex decode; invalid modes and characters are rejected."

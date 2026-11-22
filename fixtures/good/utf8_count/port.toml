@@ -1,0 +1,6 @@
+schema = 1
+id = "utf8_count"
+kind = "good"
+classes = ["ret", "err"]
+expected = "pass"
+note = "Strict UTF-8 scalar counting with overlong and surrogate rejection"

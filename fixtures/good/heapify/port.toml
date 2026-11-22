@@ -1,0 +1,6 @@
+schema = 1
+id = "heapify"
+kind = "good"
+classes = ["buf"]
+expected = "pass"
+note = "Build a min-heap from the payload words"

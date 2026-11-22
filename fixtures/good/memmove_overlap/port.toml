@@ -1,0 +1,6 @@
+schema = 1
+id = "memmove_overlap"
+kind = "good"
+classes = ["buf"]
+expected = "pass"
+note = "C memmove and Rust copy_within agree on overlapping and disjoint copies"

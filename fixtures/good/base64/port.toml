@@ -1,0 +1,6 @@
+schema = 1
+id = "base64"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "RFC 4648 base64 codec with strict padding and pad-bit validation"

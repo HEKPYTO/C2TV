@@ -1,0 +1,6 @@
+schema = 1
+id = "merge_sorted"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "Sorted u32 arrays merge into a sorted u32 stream; malformed payloads are rejected."

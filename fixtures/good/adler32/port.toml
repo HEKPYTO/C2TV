@@ -1,0 +1,6 @@
+schema = 1
+id = "adler32"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "Adler-32 checksum of the payload bytes"

@@ -1,0 +1,6 @@
+schema = 1
+id = "murmur3"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "MurmurHash3 x86 32-bit with seed zero over arbitrary byte strings."

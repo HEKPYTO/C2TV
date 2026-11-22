@@ -1,0 +1,7 @@
+schema = 1
+id = "bad_overflow"
+kind = "bad"
+classes = ["ret"]
+expected = "diverge"
+note = "C signed addition overflows at INT_MAX plus one while Rust saturates"
+bug = "overflow"

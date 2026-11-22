@@ -1,0 +1,7 @@
+schema = 1
+id = "bad_aliasing"
+kind = "bad"
+classes = ["buf"]
+expected = "diverge"
+note = "C memcpy with src below dst overwrites its own source while Rust copy_within preserves it"
+bug = "aliasing"
