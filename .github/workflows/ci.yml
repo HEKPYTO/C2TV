@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_OFFLINE: "true"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+
+      - name: Fetch dependencies
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+
+      - name: Assert clang is present
+        run: clang --version
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --offline -- -D warnings
+
+      - name: Run tests
+        run: cargo test --offline
+
+      - name: Install c2rust 0.22.1
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev clang libclang-dev cmake libssl-dev pkg-config
+          cargo install c2rust --version 0.22.1 --locked
+          version="$(c2rust transpile --version)"
+          test "$version" = "transpile 0.22.1"
+          sha256="$(sha256sum "$(command -v c2rust)" | cut -d' ' -f1)"
+          {
+            echo '### c2rust'
+            echo "- version: \`$version\`"
+            echo "- sha256: \`$sha256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify transpiler version
+        run: |
+          set -euo pipefail
+          version="$(c2rust transpile --version)"
+          if [ "$version" != "transpile 0.22.1" ]; then
+            echo "expected transpile 0.22.1, got $version" >&2
+            exit 1
+          fi
+
+      - name: Self-test determinism
+        run: |
+          set -euo pipefail
+          cargo run --offline -- self-test --fixtures fixtures --json > /tmp/c2tv-self-test-1.json
+          cargo run --offline -- self-test --fixtures fixtures --json > /tmp/c2tv-self-test-2.json
+          first="$(sha256sum /tmp/c2tv-self-test-1.json | cut -d' ' -f1)"
+          second="$(sha256sum /tmp/c2tv-self-test-2.json | cut -d' ' -f1)"
+          echo "first sha256: $first"
+          echo "second sha256: $second"
+          test "$first" = "$second"
+
+      - name: Transpile self-test
+        run: cargo run --offline -- self-test --transpile --fixtures fixtures --json
+
+      - name: Fixture tamper check
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir "$tmp/fixtures"
+          cp -R fixtures/. "$tmp/fixtures/"
+          printf '\n' >> "$tmp/fixtures/good/adler32/corpus.hex"
+          set +e
+          cargo run --offline -- self-test --fixtures "$tmp/fixtures" --json > "$tmp/out.json" 2>&1
+          code=$?
+          set -e
+          cat "$tmp/out.json"
+          test "$code" -eq 2
+          grep -q TV0011 "$tmp/out.json"
+
+      - name: Reject comments in Rust sources
+        run: |
+          set -euo pipefail
+          matches="$(find src tests fixtures -type f -name '*.rs' -exec sed -e 's:"[^"]*"::g' -e "s:'[^']*'::g" {} + | grep -nE '//|/\*' || true)"
+          if [ -n "$matches" ]; then
+            echo "$matches"
+            exit 1
+          fi

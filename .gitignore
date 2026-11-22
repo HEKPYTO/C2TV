@@ -11,5 +11,6 @@
 !tests/**
 !scripts/**
 !.github/**
+!.pre-commit-config.yaml
 target/
 **/target/
