@@ -4,6 +4,7 @@ use crate::diag::{self, Diagnostic};
 pub enum Kind {
     Good,
     Bad,
+    Real,
 }
 
 impl Kind {
@@ -11,6 +12,7 @@ impl Kind {
         match self {
             Kind::Good => "good",
             Kind::Bad => "bad",
+            Kind::Real => "real",
         }
     }
 }
@@ -144,12 +146,13 @@ pub fn parse_manifest(
     let kind = match table.get("kind").and_then(toml::Value::as_str) {
         Some("good") => Kind::Good,
         Some("bad") => Kind::Bad,
+        Some("real") => Kind::Real,
         Some(value) => {
             errors.push(bad(fixture, format!("invalid kind: {value}")));
             Kind::Good
         }
         None => {
-            errors.push(bad(fixture, "kind must be good or bad"));
+            errors.push(bad(fixture, "kind must be good, bad, or real"));
             Kind::Good
         }
     };
@@ -188,8 +191,12 @@ pub fn parse_manifest(
         }
     };
 
+    if kind == Kind::Real && expected != Verdict::Pass {
+        errors.push(bad(fixture, "real fixtures must expect pass"));
+    }
+
     let _bug = match table.get("bug") {
-        Some(_) if kind == Kind::Good => {
+        Some(_) if kind != Kind::Bad => {
             errors.push(bad(fixture, "bug is only valid for bad fixtures"));
             None
         }
@@ -323,6 +330,26 @@ mod tests {
         assert_eq!(manifest.kind, Kind::Good);
         assert_eq!(manifest.classes, vec![Class::Buf, Class::Ret]);
         assert_eq!(manifest.expected, Verdict::Pass);
+    }
+
+    #[test]
+    fn parses_real_manifest() {
+        let text = TEXT.replace("kind = \"good\"", "kind = \"real\"");
+        let manifest = parse_manifest(&text, "varint", "varint").unwrap();
+        assert_eq!(manifest.kind, Kind::Real);
+        assert_eq!(manifest.expected, Verdict::Pass);
+        let text = format!("{text}bug = \"overflow\"\n");
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("only valid for bad")));
+    }
+
+    #[test]
+    fn real_fixtures_must_expect_pass() {
+        let text = TEXT
+            .replace("kind = \"good\"", "kind = \"real\"")
+            .replace("expected = \"pass\"", "expected = \"diverge\"");
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("expect pass")));
     }
 
     #[test]
