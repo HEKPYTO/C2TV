@@ -5,9 +5,10 @@ same corpus, compare observable behaviour, and fail CI with the first
 counterexample.
 
 Informed by *C-to-Rust Translation Validation at the LLVM IR Level via AI-Assisted
-Refinement Proof* (arXiv:2611.18036). Independent work; not affiliated with the
-authors. The paper proves refinement. This tool does not. It is a gate: a
-heuristic that catches divergence, not a verifier.
+Refinement Proof* (arXiv:2611.18036). This project is independent work. It is not
+affiliated with, endorsed by, or developed by the paper's research team. The
+paper proves refinement. This tool does not. It is a gate: a heuristic that
+catches divergence, not a verifier.
 
 ## Status
 
