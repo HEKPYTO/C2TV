@@ -284,8 +284,11 @@ pub fn parse_manifest(
 
     let transpile = match table.get("transpile") {
         Some(value) => match value.as_bool() {
-            Some(true) if kind != Kind::Good => {
-                errors.push(bad(fixture, "transpile is only valid for good fixtures"));
+            Some(true) if kind == Kind::Bad => {
+                errors.push(bad(
+                    fixture,
+                    "transpile is only valid for good and real fixtures",
+                ));
                 false
             }
             Some(flag) => flag,
@@ -479,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_transpile_flag_and_rejects_it_on_bad_fixtures() {
+    fn parses_transpile_flag_on_good_and_real_but_not_bad() {
         let text = format!("{TEXT}transpile = true\n");
         let manifest = parse_manifest(&text, "varint", "varint").unwrap();
         assert!(manifest.transpile);
@@ -491,17 +494,15 @@ mod tests {
                 "bug = \"off-by-one\"\nnote = \"loop edges\"\ntranspile = true",
             );
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("transpile is only valid for good")));
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("transpile is only valid for good and real")));
         let text = TEXT.replace("kind = \"good\"", "kind = \"real\"").replace(
             "note = \"loop edges\"",
             "note = \"loop edges\"\ntranspile = true",
         );
-        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.message.contains("transpile is only valid for good")));
+        let manifest = parse_manifest(&text, "varint", "varint").unwrap();
+        assert!(manifest.transpile);
     }
     #[test]
     fn parses_corpus_cases() {

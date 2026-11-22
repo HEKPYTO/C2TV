@@ -4,3 +4,4 @@ kind = "real"
 classes = ["buf", "err"]
 expected = "pass"
 note = "FIPS-197 AES-128 block encryption and decryption over ECB"
+transpile = true

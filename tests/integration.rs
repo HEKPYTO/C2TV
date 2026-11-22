@@ -286,7 +286,7 @@ fn self_test_transpile_runs_flagged_fixtures() {
     assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let entries = report["transpile"].as_array().unwrap();
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 5);
     assert_eq!(report["fixtures"].as_array().unwrap().len(), 26);
     assert!(entries.iter().all(|entry| entry["verdict"] == "pass"));
 }
