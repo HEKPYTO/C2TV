@@ -35,11 +35,15 @@ error, never a divergence.
 | `classes` | `ret`, `buf`, `err` | compared fields; anything else is reported `not compared` |
 | `expected` | `pass` / `diverge` | verdict the gate must produce; `real` must be `pass` |
 | `bug` | `overflow` / `aliasing` / `off-by-one` | required for `bad` only |
+| `expect_case` | zero-based corpus index | required for `bad`; observed first divergence must match |
+| `expect_class` | `ret` / `buf` / `err` | required for `bad`; observed first differing field must match |
 | `transpile` | `true` | optional; run the c2rust lane for this `good` fixture |
 | `note` | string | one line, why the fixture exists |
 
-Real fixtures must pass both unit tests in `src/lib.rs` and integration tests
-in `tests/` with `cargo test --offline`.
+Every fixture crate must pass `cargo test --offline` during fixture
+preparation; a failing crate test is `TV0021` and exits 2. Fixtures are
+trusted code: build scripts and harnesses execute arbitrary code with
+network access. `cargo --offline` only blocks dependency fetches.
 
 Corpus: `corpus.hex`, one case per line, hex-encoded request bytes, `-` for the
 empty input. Sorted by case index.
@@ -73,11 +77,11 @@ empty input. Sorted by case index.
 
 ### Bad — must diverge on exactly one declared reason
 
-| # | id | bug | broken behaviour | first differing case |
+| # | id | bug | broken behaviour | expect_case / expect_class |
 |---|---|---|---|---|
-| 21 | `bad_overflow` | `overflow` | C accumulates into `int` and overflows; Rust port saturates. UBSan reports signed overflow on C. | `INT_MAX + 1` input |
-| 22 | `bad_aliasing` | `aliasing` | C copies forward with overlapping regions (undefined `memcpy` use); Rust port uses an overlap-safe `copy_within`. | source below destination, ranges overlap |
-| 23 | `bad_off-by-one` | `off-by-one` | C writes `len - 1` bytes and drops the final byte; Rust writes `len`. | any non-empty output |
+| 21 | `bad_overflow` | `overflow` | C accumulates into `int` and overflows; Rust port saturates. UBSan reports signed overflow on C. | 5 / ret |
+| 22 | `bad_aliasing` | `aliasing` | C copies forward with overlapping regions (undefined `memcpy` use); Rust port uses an overlap-safe `copy_within`. | 5 / buf |
+| 23 | `bad_off-by-one` | `off-by-one` | C writes `len - 1` bytes and drops the final byte; Rust writes `len`. | 4 / buf |
 
 Each bad fixture must pass its crate tests on the Rust side (the Rust code is
 internally consistent) and differ from C only on the declared case. A bad
@@ -117,8 +121,16 @@ against the C reference. Unexpected generated layout is `TV0017`.
 | `TV0019` | `transpiled_nondeterminism` | 2 | two generated crate digests differ |
 | `TV0020` | `transpiled_divergence` | 1 | transpiled and C frames differ; case and first differing byte reported |
 
-`c2tv self-test --transpile --fixtures <dir>` runs this lane for every manifest
-with `transpile = true`. Missing or mismatched transpiler fails closed.
+`c2tv self-test --transpile --fixtures <dir>` runs the main gate over all
+fixtures and then the transpile lane over every `transpile = true` fixture.
+Both lanes appear in one report. Missing or mismatched transpiler fails closed.
+
+`c2tv lock --fixtures <dir>` writes `digests.toml`. Both `self-test` and
+`check` require it. `self-test` verifies the exact set: every discovered
+fixture must be locked, every locked id and path must exist, and no extra id
+may be present. `check` verifies only the entries for the fixtures it is
+given, so a lock covering a larger tree is valid. A missing lock, drifted
+input, or an unlocked fixture is a tool error (exit 2).
 
 ## Kill gate
 

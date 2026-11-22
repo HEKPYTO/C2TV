@@ -1,10 +1,8 @@
 use crate::diag::{self, Diagnostic, Level};
+use crate::process::{self, Captured};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 pub struct Built {
     pub c_o0: PathBuf,
@@ -16,39 +14,30 @@ pub struct Built {
     pub rustc_version: String,
 }
 
+fn first_line(captured: &Captured) -> String {
+    String::from_utf8_lossy(&captured.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 pub fn version(program: &str) -> String {
-    Command::new(program)
-        .arg("--version")
-        .output()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        })
+    let mut command = process::sanitized(program);
+    command.arg("--version");
+    process::run(&mut command, None, process::PROBE_TIMEOUT)
+        .map(|captured| first_line(&captured))
         .unwrap_or_default()
 }
 pub fn probe_args(program: &str, args: &[&str]) -> Option<String> {
-    let program = program.to_string();
-    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let version = Command::new(&program)
-            .args(&args)
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .next()
-                    .map(|line| line.trim().to_string())
-            });
-        let _ = sender.send(version);
-    });
-    receiver.recv_timeout(Duration::from_secs(2)).ok().flatten()
+    let mut command = process::sanitized(program);
+    command.args(args);
+    process::run(&mut command, None, process::PROBE_TIMEOUT)
+        .ok()
+        .filter(|captured| captured.success)
+        .map(|captured| first_line(&captured))
+        .filter(|text| !text.is_empty())
 }
 
 pub fn probe(program: &str) -> Option<String> {
@@ -72,7 +61,7 @@ fn step(
     environment: &[(&str, String)],
     errors: &mut Vec<Diagnostic>,
 ) {
-    let mut command = Command::new(program);
+    let mut command = process::sanitized(program);
     command.args(args);
     if let Some(directory) = cwd {
         command.current_dir(directory);
@@ -80,25 +69,111 @@ fn step(
     for (key, value) in environment {
         command.env(key, value);
     }
-    match command.output() {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => errors.push(Diagnostic::new(
-            diag::NONZERO_EXIT,
-            fixture,
-            None,
-            level,
-            format!(
-                "{program} exited {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        )),
+    match process::run(&mut command, None, process::BUILD_TIMEOUT) {
+        Ok(captured) => {
+            if captured.truncated {
+                errors.push(diag::truncation(
+                    fixture,
+                    None,
+                    level,
+                    format!(
+                        "{program} output exceeded {} byte budget",
+                        process::OUTPUT_CAP
+                    ),
+                ));
+            }
+            if captured.timed_out {
+                errors.push(Diagnostic::new(
+                    diag::TIMEOUT,
+                    fixture,
+                    None,
+                    level,
+                    format!(
+                        "{program} exceeded {}ms timeout",
+                        process::BUILD_TIMEOUT.as_millis()
+                    ),
+                ));
+            } else if !captured.success {
+                errors.push(Diagnostic::new(
+                    diag::NONZERO_EXIT,
+                    fixture,
+                    None,
+                    level,
+                    format!(
+                        "{program} exited {}: {}",
+                        captured.status,
+                        String::from_utf8_lossy(&captured.stderr).trim()
+                    ),
+                ));
+            }
+        }
         Err(error) => errors.push(Diagnostic::new(
             diag::SPAWN,
             fixture,
             None,
             level,
             format!("cannot run {program}: {error}"),
+        )),
+    }
+}
+
+pub(crate) fn test_step(
+    fixture: &str,
+    crate_dir: &Path,
+    target_dir: &Path,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let mut command = process::sanitized("cargo");
+    command
+        .args(["test", "--offline"])
+        .current_dir(crate_dir)
+        .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_NET_OFFLINE", "true");
+    match process::run(&mut command, None, process::BUILD_TIMEOUT) {
+        Ok(captured) => {
+            if captured.truncated {
+                errors.push(diag::truncation(
+                    fixture,
+                    None,
+                    None,
+                    format!(
+                        "cargo test output exceeded {} byte budget",
+                        process::OUTPUT_CAP
+                    ),
+                ));
+            }
+            if captured.timed_out {
+                errors.push(Diagnostic::new(
+                    diag::TIMEOUT,
+                    fixture,
+                    None,
+                    None,
+                    format!(
+                        "cargo test exceeded {}ms timeout",
+                        process::BUILD_TIMEOUT.as_millis()
+                    ),
+                ));
+            } else if !captured.success {
+                errors.push(Diagnostic::new(
+                    diag::CRATE_TEST_FAILED,
+                    fixture,
+                    None,
+                    None,
+                    format!(
+                        "cargo test exited {}: stderr: {} stdout: {}",
+                        captured.status,
+                        String::from_utf8_lossy(&captured.stderr).trim(),
+                        String::from_utf8_lossy(&captured.stdout).trim()
+                    ),
+                ));
+            }
+        }
+        Err(error) => errors.push(Diagnostic::new(
+            diag::SPAWN,
+            fixture,
+            None,
+            None,
+            format!("cannot run cargo test: {error}"),
         )),
     }
 }
@@ -152,6 +227,7 @@ fn rust_step(
                 Level::O2 => "2".to_string(),
             },
         ),
+        ("CARGO_NET_OFFLINE", "true".to_string()),
     ];
     step(
         fixture,
@@ -169,11 +245,22 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let kind = entry.file_type()?;
+        let source = entry.path();
         let target = to.join(entry.file_name());
-        if kind.is_dir() {
-            copy_tree(&entry.path(), &target)?;
+        if kind.is_symlink() {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                format!("symlink not allowed: {}", source.display()),
+            ));
+        } else if kind.is_dir() {
+            copy_tree(&source, &target)?;
         } else if kind.is_file() {
-            fs::copy(entry.path(), target)?;
+            fs::copy(&source, target)?;
+        } else {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                format!("unsupported fixture entry: {}", source.display()),
+            ));
         }
     }
     Ok(())
@@ -273,5 +360,46 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, "TV0007");
         assert!(errors[0].message.contains(&long));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn copy_tree_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("c2tv-copy-{}-{}", std::process::id(), 1));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("from")).unwrap();
+        fs::write(root.join("from").join("file.txt"), "x").unwrap();
+        symlink(
+            root.join("from").join("file.txt"),
+            root.join("from").join("link"),
+        )
+        .unwrap();
+        let error = copy_tree(&root.join("from"), &root.join("to")).unwrap_err();
+        assert!(error.to_string().contains("symlink not allowed"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn crate_test_failure_is_typed_and_keeps_test_output() {
+        let root = std::env::temp_dir().join(format!("c2tv-test-fail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crate").join("src")).unwrap();
+        fs::write(
+            root.join("crate").join("Cargo.toml"),
+            "[package]\nname = \"failing\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("crate").join("src").join("lib.rs"),
+            "#[test]\nfn deliberate_failure() { panic!(\"TV0021 proof\"); }\n",
+        )
+        .unwrap();
+        let mut errors = Vec::new();
+        test_step("f", &root.join("crate"), &root.join("target"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "TV0021");
+        assert_eq!(errors[0].exit_class, diag::ExitClass::ToolError);
+        assert!(errors[0].message.contains("TV0021 proof"));
+        fs::remove_dir_all(&root).unwrap();
     }
 }

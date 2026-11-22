@@ -7,26 +7,36 @@ pub enum ProtocolError {
     ShortBody,
     Trailing,
     BadStatus,
+    TooLarge,
 }
+
+pub const REQUEST_CAP: usize = 4096;
 
 impl ProtocolError {
     pub fn diagnostic(self, fixture: &str, case: usize, level: Level) -> Diagnostic {
         match self {
-            ProtocolError::ShortHeader | ProtocolError::ShortBody => Diagnostic::new(
+            Self::TooLarge => Diagnostic::new(
+                diag::CORPUS_HEX,
+                fixture,
+                Some(case),
+                Some(level),
+                format!("payload exceeds {REQUEST_CAP}-byte request cap"),
+            ),
+            Self::ShortHeader | Self::ShortBody => Diagnostic::new(
                 diag::SHORT_READ,
                 fixture,
                 Some(case),
                 Some(level),
                 "response frame shorter than declared length",
             ),
-            ProtocolError::Trailing => Diagnostic::new(
+            Self::Trailing => Diagnostic::new(
                 diag::TRAILING,
                 fixture,
                 Some(case),
                 Some(level),
                 "response frame has trailing bytes",
             ),
-            ProtocolError::BadStatus => Diagnostic::new(
+            Self::BadStatus => Diagnostic::new(
                 diag::BAD_STATUS,
                 fixture,
                 Some(case),
@@ -37,12 +47,15 @@ impl ProtocolError {
     }
 }
 
-pub fn encode_request(payload: &[u8]) -> Option<Vec<u8>> {
-    let len = u32::try_from(payload.len()).ok()?;
+pub fn encode_request(payload: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    if payload.len() > REQUEST_CAP {
+        return Err(ProtocolError::TooLarge);
+    }
+    let len = payload.len() as u32;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_le_bytes());
     frame.extend_from_slice(payload);
-    Some(frame)
+    Ok(frame)
 }
 
 pub fn parse_response(bytes: &[u8]) -> Result<Observation, ProtocolError> {
@@ -95,9 +108,13 @@ mod tests {
 
     #[test]
     fn encodes_request_frame() {
-        assert_eq!(encode_request(&[]), Some(vec![0, 0, 0, 0]));
-        assert_eq!(encode_request(&[0x2a]), Some(vec![1, 0, 0, 0, 0x2a]));
-        assert_eq!(encode_request(&[1, 2]), Some(vec![2, 0, 0, 0, 1, 2]));
+        assert_eq!(encode_request(&[]), Ok(vec![0, 0, 0, 0]));
+        assert_eq!(encode_request(&[0x2a]), Ok(vec![1, 0, 0, 0, 0x2a]));
+        assert_eq!(encode_request(&[1, 2]), Ok(vec![2, 0, 0, 0, 1, 2]));
+        assert_eq!(
+            encode_request(&vec![0x2a; REQUEST_CAP + 1]),
+            Err(ProtocolError::TooLarge)
+        );
     }
 
     #[test]
