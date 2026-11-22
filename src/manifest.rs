@@ -340,7 +340,9 @@ mod tests {
         assert_eq!(manifest.expected, Verdict::Pass);
         let text = format!("{text}bug = \"overflow\"\n");
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("only valid for bad")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("only valid for bad")));
     }
 
     #[test]
@@ -349,7 +351,9 @@ mod tests {
             .replace("kind = \"good\"", "kind = \"real\"")
             .replace("expected = \"pass\"", "expected = \"diverge\"");
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("expect pass")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("expect pass")));
     }
 
     #[test]
