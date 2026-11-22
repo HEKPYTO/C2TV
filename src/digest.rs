@@ -50,23 +50,41 @@ fn collect(
     let mut names = Vec::new();
     for entry in entries {
         match entry {
-            Ok(entry) => names.push(entry.file_name()),
+            Ok(entry) => match entry.file_type() {
+                Ok(kind) => names.push((entry.file_name(), kind)),
+                Err(error) => diagnostics.push(digest_error(
+                    fixture,
+                    format!("cannot inspect fixture entry: {error}"),
+                )),
+            },
             Err(error) => diagnostics.push(digest_error(
                 fixture,
                 format!("cannot list fixture entry: {error}"),
             )),
         }
     }
-    names.sort();
-    for name in names {
+    names.sort_by(|left, right| left.0.cmp(&right.0));
+    for (name, kind) in names {
         let path = directory.join(&name);
-        let label = name.to_string_lossy().into_owned();
-        if path.is_dir() {
+        let label = name.to_string_lossy();
+        let relative = path
+            .strip_prefix(root)
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| label.into_owned());
+        if kind.is_symlink() {
+            diagnostics.push(digest_error(
+                fixture,
+                format!("symlink not allowed in fixture: {relative}"),
+            ));
+        } else if kind.is_dir() {
             collect(root, &path, files, fixture, diagnostics);
-        } else if path.is_file() && label != "digests.toml" {
-            if let Ok(relative) = path.strip_prefix(root) {
-                files.push((relative.to_string_lossy().replace('\\', "/"), path));
-            }
+        } else if kind.is_file() && path != root.join("digests.toml") {
+            files.push((relative, path));
+        } else if !kind.is_file() {
+            diagnostics.push(digest_error(
+                fixture,
+                format!("unsupported fixture entry: {relative}"),
+            ));
         }
     }
 }
@@ -120,7 +138,11 @@ pub fn write_lock(root: &Path, all: &AllDigests) -> Result<(), Diagnostic> {
         .map_err(|error| digest_error("digests.toml", format!("cannot write digests: {error}")))
 }
 
-pub fn verify(all: &AllDigests, lock: &DigestFile) -> Vec<Diagnostic> {
+pub fn verify(
+    roots: &BTreeMap<String, PathBuf>,
+    all: &AllDigests,
+    lock: &DigestFile,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut ids: Vec<&String> = all.keys().chain(lock.fixtures.keys()).collect();
     ids.sort_unstable();
@@ -128,6 +150,22 @@ pub fn verify(all: &AllDigests, lock: &DigestFile) -> Vec<Diagnostic> {
     for id in ids {
         let actual = all.get(id);
         let expected = lock.fixtures.get(id);
+        if let Some(expected) = expected {
+            for name in expected.keys() {
+                let exists = roots
+                    .get(id)
+                    .is_some_and(|directory| directory.join(name).is_file());
+                if !exists {
+                    diagnostics.push(Diagnostic::new(
+                        diag::DIGEST,
+                        id,
+                        None,
+                        None,
+                        format!("locked fixture path missing: {name}"),
+                    ));
+                }
+            }
+        }
         match (actual, expected) {
             (Some(actual), Some(expected)) if actual == expected => {}
             (Some(actual), Some(expected)) => {
@@ -146,13 +184,21 @@ pub fn verify(all: &AllDigests, lock: &DigestFile) -> Vec<Diagnostic> {
                     }
                 }
             }
-            _ => diagnostics.push(Diagnostic::new(
+            (Some(_), None) => diagnostics.push(Diagnostic::new(
                 diag::DIGEST,
                 id,
                 None,
                 None,
-                "fixture missing from digest comparison",
+                "discovered fixture missing from lock",
             )),
+            (None, Some(_)) => diagnostics.push(Diagnostic::new(
+                diag::DIGEST,
+                id,
+                None,
+                None,
+                "locked fixture id was not discovered",
+            )),
+            (None, None) => {}
         }
     }
     diagnostics
@@ -172,20 +218,39 @@ mod tests {
 
     #[test]
     fn digest_roundtrip_and_mismatch() {
+        let root = std::env::temp_dir().join(format!("c2tv-verify-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("f")).unwrap();
+        fs::write(root.join("f").join("port.toml"), "a").unwrap();
         let mut all = AllDigests::new();
         let mut one = Digests::new();
         one.insert("port.toml".to_string(), sha256_hex(b"a"));
         all.insert("f".to_string(), one);
+        let roots: BTreeMap<String, PathBuf> =
+            [("f".to_string(), root.join("f"))].into_iter().collect();
         let file = DigestFile {
             fixtures: all.clone(),
         };
-        assert!(verify(&all, &file).is_empty());
+        assert!(verify(&roots, &all, &file).is_empty());
         let mut other = all.clone();
         other
             .get_mut("f")
             .unwrap()
             .insert("port.toml".to_string(), "00".to_string());
-        assert_eq!(verify(&other, &file).len(), 1);
+        let errors = verify(&roots, &other, &file);
+        assert!(errors.len() >= 1);
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("digest mismatch")));
+        let extra = DigestFile {
+            fixtures: [("ghost".to_string(), all["f"].clone())]
+                .into_iter()
+                .collect(),
+        };
+        assert!(verify(&roots, &all, &extra)
+            .iter()
+            .any(|error| error.message.contains("locked fixture path missing")));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -245,5 +310,44 @@ mod tests {
             fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
         }
         let _ = fs::remove_dir_all(&root);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn symlink_loop_and_symlinked_file_are_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("c2tv-digest-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub").join("ok.txt"), "ok").unwrap();
+        symlink("..", root.join("sub").join("loop")).unwrap();
+        symlink(root.join("sub").join("ok.txt"), root.join("link.txt")).unwrap();
+        let mut diagnostics = Vec::new();
+        let digests = fixture_digests(&root, "f", &mut diagnostics);
+        assert!(digests.contains_key("sub/ok.txt"));
+        assert!(!digests.contains_key("sub/loop"));
+        assert!(!digests.contains_key("link.txt"));
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|item| item.message.contains("symlink not allowed"))
+                .count(),
+            2
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn nested_digest_lock_is_pinned() {
+        let root = std::env::temp_dir().join(format!("c2tv-digest-nested-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("digests.toml"), "root lock").unwrap();
+        fs::write(root.join("sub").join("digests.toml"), "nested lock").unwrap();
+        let mut diagnostics = Vec::new();
+        let digests = fixture_digests(&root, "f", &mut diagnostics);
+        assert!(diagnostics.is_empty());
+        assert!(!digests.contains_key("digests.toml"));
+        assert_eq!(digests["sub/digests.toml"], sha256_hex(b"nested lock"));
+        fs::remove_dir_all(&root).unwrap();
     }
 }

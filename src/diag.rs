@@ -165,6 +165,27 @@ pub const TRANSPILED_DIVERGENCE: CodeInfo = CodeInfo {
     severity: Severity::Error,
     exit_class: ExitClass::Fail,
 };
+pub const CRATE_TEST_FAILED: CodeInfo = CodeInfo {
+    code: "TV0021",
+    name: "crate_test_failed",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const OUTPUT_LIMIT: CodeInfo = CodeInfo {
+    code: "TV0022",
+    name: "output_truncated",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+
+pub fn truncation(
+    fixture: &str,
+    case: Option<usize>,
+    level: Option<Level>,
+    message: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(OUTPUT_LIMIT, fixture, case, level, message)
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Diagnostic {

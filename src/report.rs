@@ -4,18 +4,23 @@ use crate::digest::Digests;
 use serde::Serialize;
 use std::fmt::Write as _;
 
+pub const OUT_HEX_CAP: usize = 256;
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ResponseReport {
     pub status: u64,
     pub ret: u64,
     pub out_len: u32,
     pub out_hex: String,
+    pub out_hex_truncated: bool,
 }
 
 impl From<&Observation> for ResponseReport {
     fn from(observation: &Observation) -> Self {
-        let mut out_hex = String::with_capacity(observation.out.len() * 2);
-        for byte in &observation.out {
+        let truncated = observation.out.len() > OUT_HEX_CAP;
+        let visible = &observation.out[..observation.out.len().min(OUT_HEX_CAP)];
+        let mut out_hex = String::with_capacity(visible.len() * 2);
+        for byte in visible {
             let _ = write!(&mut out_hex, "{byte:02x}");
         }
         Self {
@@ -23,6 +28,7 @@ impl From<&Observation> for ResponseReport {
             ret: observation.ret,
             out_len: observation.out.len() as u32,
             out_hex,
+            out_hex_truncated: truncated,
         }
     }
 }
@@ -52,6 +58,11 @@ pub struct FixtureReport {
     pub digests: Digests,
     pub cases: Vec<CaseReport>,
     pub first_diff: Option<FirstDiff>,
+    pub first_diff_case: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expect_case: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expect_class: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -62,6 +73,8 @@ pub struct TranspileReport {
     pub generated_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_diff: Option<FirstDiff>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rustc_version: Option<String>,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Report {
@@ -147,29 +160,39 @@ pub fn human(report: &Report) -> String {
     if let Some(entries) = &report.transpile {
         for entry in entries {
             let _ = writeln!(text, "transpile {}: {}", entry.id, entry.verdict);
+            if let Some(version) = &entry.rustc_version {
+                let _ = writeln!(text, "  rustc: {version}");
+            }
         }
     }
     let _ = writeln!(text);
     let _ = writeln!(
         text,
-        "{:<22} {:<6} {:<9} {:<9} {:<9}",
-        "fixture", "kind", "expected", "observed", "o0/o2"
+        "{:<22} {:<6} {:<9} {:<9} {:<12}",
+        "fixture", "kind", "expected", "observed", "worst o0/o2"
     );
     for fixture in &report.fixtures {
-        let levels = fixture
-            .cases
-            .first()
-            .map(|case| {
-                case.levels
+        let rank = |verdict: &str| match verdict {
+            "error" => 2,
+            "diverge" => 1,
+            _ => 0,
+        };
+        let levels = ["o0", "o2"]
+            .iter()
+            .map(|name| {
+                fixture
+                    .cases
                     .iter()
-                    .map(|level| level.verdict)
-                    .collect::<Vec<_>>()
-                    .join("/")
+                    .flat_map(|case| case.levels.iter())
+                    .filter(|entry| entry.level == *name)
+                    .max_by_key(|entry| rank(entry.verdict))
+                    .map_or("-", |entry| entry.verdict)
             })
-            .unwrap_or_else(|| "-".to_string());
+            .collect::<Vec<_>>()
+            .join("/");
         let _ = writeln!(
             text,
-            "{:<22} {:<6} {:<9} {:<9} {:<9}",
+            "{:<22} {:<6} {:<9} {:<9} {:<12}",
             fixture.id, fixture.kind, fixture.expected, fixture.observed, levels
         );
         if let Some(diff) = &fixture.first_diff {
@@ -222,6 +245,9 @@ mod tests {
             digests: Digests::new(),
             cases: vec![],
             first_diff: None,
+            first_diff_case: None,
+            expect_case: None,
+            expect_class: None,
         }
     }
 
@@ -301,5 +327,61 @@ mod tests {
             out: vec![0x0a, 0xff],
         };
         assert_eq!(ResponseReport::from(&observation).out_hex, "0aff");
+    }
+    #[test]
+    fn response_hex_is_capped_and_flagged() {
+        let observation = Observation {
+            status: 0,
+            ret: 0,
+            out: vec![0xab; OUT_HEX_CAP + 1],
+        };
+        let converted = ResponseReport::from(&observation);
+        assert_eq!(converted.out_hex.len(), OUT_HEX_CAP * 2);
+        assert!(converted.out_hex_truncated);
+        assert_eq!(converted.out_len as usize, OUT_HEX_CAP + 1);
+    }
+
+    #[test]
+    fn human_table_shows_worst_case_verdict() {
+        let mut value = report(&["f"]);
+        value.fixtures[0].cases = vec![
+            CaseReport {
+                index: 0,
+                levels: vec![
+                    LevelReport {
+                        level: "o0",
+                        c: None,
+                        rust: None,
+                        verdict: "ok",
+                    },
+                    LevelReport {
+                        level: "o2",
+                        c: None,
+                        rust: None,
+                        verdict: "ok",
+                    },
+                ],
+            },
+            CaseReport {
+                index: 1,
+                levels: vec![
+                    LevelReport {
+                        level: "o0",
+                        c: None,
+                        rust: None,
+                        verdict: "diverge",
+                    },
+                    LevelReport {
+                        level: "o2",
+                        c: None,
+                        rust: None,
+                        verdict: "ok",
+                    },
+                ],
+            },
+        ];
+        let text = human(&value);
+        assert!(text.contains("worst o0/o2"));
+        assert!(text.contains("diverge/ok"));
     }
 }

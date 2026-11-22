@@ -2,8 +2,10 @@
 
 A translation-validation gate for C→Rust ports.
 
-Compile both sides to LLVM IR, run them on the same inputs, diff observable
-behaviour and undefined-behaviour signals, and fail CI with a counterexample.
+Compile both sides at matched optimisation levels, run the same corpus, and
+compare the declared result classes (return, buffer, status); undeclared fields
+and exact response frames are not compared. Undefined-behaviour signals are
+reported as evidence, and CI fails with a counterexample.
 
 Informed by:
 
@@ -61,6 +63,8 @@ false-positiving the 20 good ones, stop — the signal is too weak to ship.
 ## Risks / non-goals
 
 - Not a proof tool. Do not claim soundness.
+- Fixtures are trusted code: their build scripts and harnesses execute with
+  network access. `cargo --offline` only blocks dependency fetches.
 - Rust UB and C UB differ; Miri cannot run FFI-heavy code.
 - Benchmark suites may not be redistributable; ship generators instead.
 - LLM-generated translations are the paper's setting; the tool should work on
