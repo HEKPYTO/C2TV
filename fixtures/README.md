@@ -106,7 +106,7 @@ fixture that differs on a second case is a broken fixture, not a finding.
 
 If the three bad fixtures cannot be separated from the twenty good ones plus
 the three real ones without false positives, stop. The gate idea is wrong.
-The release gate is 20 good + 3 bad + 3 real; `c2tv self-test --fixtures fixtures/good`, `c2tv self-test --fixtures fixtures/bad`, and `c2tv self-test --fixtures fixtures/real` must all pass.
+The release gate is 20 good + 3 bad + 3 real; `c2tv self-test --fixtures fixtures` must pass.
 
 ## Not claimed
 
