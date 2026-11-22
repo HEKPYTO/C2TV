@@ -1,0 +1,6 @@
+schema = 1
+id = "ringbuf"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "Bounded ring buffer with wraparound contents and operation validation"

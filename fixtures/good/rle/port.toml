@@ -1,0 +1,6 @@
+schema = 1
+id = "rle"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "Run-length encode payload with a capacity bound"

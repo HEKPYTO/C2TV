@@ -1,0 +1,6 @@
+schema = 1
+id = "bitrev32"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "Reverse all 32 bits of the payload word"

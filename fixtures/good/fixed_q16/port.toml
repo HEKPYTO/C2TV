@@ -1,0 +1,6 @@
+schema = 1
+id = "fixed_q16"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "Q16.16 fixed-point product with round half up"

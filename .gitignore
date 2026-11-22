@@ -11,3 +11,5 @@
 !tests/**
 !scripts/**
 !.github/**
+target/
+**/target/

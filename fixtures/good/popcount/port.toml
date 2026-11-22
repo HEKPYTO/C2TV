@@ -1,0 +1,6 @@
+schema = 1
+id = "popcount"
+kind = "good"
+classes = ["ret", "buf"]
+expected = "pass"
+note = "Count set bits and emit parity byte"

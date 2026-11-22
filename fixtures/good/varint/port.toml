@@ -1,0 +1,6 @@
+schema = 1
+id = "varint"
+kind = "good"
+classes = ["ret", "buf"]
+expected = "pass"
+note = "LEB128 u64 decode and encode with canonical roundtrip"

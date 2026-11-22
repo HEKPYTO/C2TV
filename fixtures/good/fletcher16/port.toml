@@ -1,0 +1,6 @@
+schema = 1
+id = "fletcher16"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "Fletcher-16 checksum of the payload bytes"

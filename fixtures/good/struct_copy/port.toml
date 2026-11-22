@@ -1,0 +1,6 @@
+schema = 1
+id = "struct_copy"
+kind = "good"
+classes = ["buf"]
+expected = "pass"
+note = "repr(C) record fields are parsed and re-emitted with all padding bytes zeroed."

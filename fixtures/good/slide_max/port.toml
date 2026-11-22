@@ -1,0 +1,6 @@
+schema = 1
+id = "slide_max"
+kind = "good"
+classes = ["buf", "err"]
+expected = "pass"
+note = "Sliding-window maxima over bounded u32 inputs with strict length validation."
