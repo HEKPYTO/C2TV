@@ -37,7 +37,7 @@ error, never a divergence.
 | `bug` | `overflow` / `aliasing` / `off-by-one` | required for `bad` only |
 | `expect_case` | zero-based corpus index | required for `bad`; observed first divergence must match |
 | `expect_class` | `ret` / `buf` / `err` | required for `bad`; observed first differing field must match |
-| `transpile` | `true` | optional; run the c2rust lane for this `good` fixture |
+| `transpile` | `true` | optional; run the c2rust lane for this `good` or `real` fixture |
 | `note` | string | one line, why the fixture exists |
 
 Every fixture crate must pass `cargo test --offline` during fixture
@@ -89,11 +89,14 @@ fixture that differs on a second case is a broken fixture, not a finding.
 
 ### Real — public-spec algorithms, must show no divergence and pass their crate tests
 
-| # | id | function | classes | why it is here |
-|---|---|---|---|---|
-| 24 | `aes128` | AES-128 ECB block encrypt/decrypt | buf, err | FIPS-197 key schedule and round transforms |
-| 25 | `sha256` | SHA-256 message digest | buf | FIPS 180-4 padding boundary and long input |
-| 26 | `qoi` | QOI decode to RGBA8 and encode back | buf, err | QOI v1.0 RGB/RGBA/RUN/INDEX/DIFF/LUMA coverage and roundtrip |
+| # | id | function | classes | transpiled | why it is here |
+|---|---|---|---|---|---|
+| 24 | `aes128` | AES-128 ECB block encrypt/decrypt | buf, err | yes | FIPS-197 key schedule and round transforms |
+| 25 | `sha256` | SHA-256 message digest | buf | yes | FIPS 180-4 padding boundary and long input |
+| 26 | `qoi` | QOI decode to RGBA8 and encode back | buf, err | yes | QOI v1.0 RGB/RGBA/RUN/INDEX/DIFF/LUMA coverage and roundtrip |
+
+All three real ports keep `transpile = true`: each passes the c2rust lane with
+stable generated digests, stable binaries, and exact O2 frames.
 
 ## Comparison rule
 

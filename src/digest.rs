@@ -238,7 +238,7 @@ mod tests {
             .unwrap()
             .insert("port.toml".to_string(), "00".to_string());
         let errors = verify(&roots, &other, &file);
-        assert!(errors.len() >= 1);
+        assert!(!errors.is_empty());
         assert!(errors
             .iter()
             .any(|error| error.message.contains("digest mismatch")));

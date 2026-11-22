@@ -4,3 +4,4 @@ kind = "real"
 classes = ["buf", "err"]
 expected = "pass"
 note = "QOI v1.0 decode to RGBA8 and encode back to QOI bytes"
+transpile = true
