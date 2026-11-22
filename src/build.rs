@@ -22,6 +22,121 @@ fn first_line(captured: &Captured) -> String {
         .trim()
         .to_string()
 }
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            result.push(ch);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                for inner in chars.by_ref() {
+                    if ('@'..='~').contains(&inner) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                while let Some(inner) = chars.next() {
+                    if inner == '\u{7}' {
+                        break;
+                    }
+                    if inner == '\u{1b}' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn strip_thread_id(line: &str) -> String {
+    let Some(index) = line.find(" panicked at ") else {
+        return line.to_string();
+    };
+    let prefix = &line[..index];
+    let Some(open) = prefix.rfind(" (") else {
+        return line.to_string();
+    };
+    let digits = &prefix[open + 2..];
+    if !digits.ends_with(')')
+        || digits.len() < 3
+        || !digits[..digits.len() - 1]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return line.to_string();
+    }
+    format!("{}{}", &prefix[..open], &line[index..])
+}
+
+fn is_test_status(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("test ") else {
+        return false;
+    };
+    let Some((_, status)) = rest.split_once(" ... ") else {
+        return false;
+    };
+    matches!(status, "ok" | "FAILED" | "ignored" | "bench")
+}
+
+fn normalize_cargo_output(bytes: &[u8], roots: &[&Path]) -> String {
+    let text = strip_ansi(&String::from_utf8_lossy(bytes));
+    let mut paths = Vec::new();
+    for root in roots {
+        let canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        for path in [root.to_path_buf(), canonical] {
+            let value = path.to_string_lossy().into_owned();
+            if !value.is_empty() && !paths.contains(&value) {
+                paths.push(value);
+            }
+        }
+    }
+    paths.sort_unstable_by_key(|path| std::cmp::Reverse(path.len()));
+    let mut substituted = text;
+    for path in paths {
+        substituted = substituted.replace(&path, "<work_root>");
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for line in substituted.lines() {
+        if line
+            .to_ascii_lowercase()
+            .contains("waiting for file lock on")
+        {
+            continue;
+        }
+        let mut normalized = strip_thread_id(line).trim_end().to_string();
+        if let Some((prefix, _)) = normalized.split_once("target(s) in ") {
+            normalized = format!("{prefix}target(s) in <time>");
+        }
+        if let Some((prefix, _)) = normalized.split_once("finished in ") {
+            normalized = format!("{prefix}finished in <time>");
+        }
+        if normalized.is_empty() {
+            continue;
+        }
+        lines.push(normalized);
+    }
+    let mut index = 0;
+    while index < lines.len() {
+        let mut end = index;
+        while end < lines.len() && is_test_status(&lines[end]) {
+            end += 1;
+        }
+        if end - index > 1 {
+            lines[index..end].sort_unstable();
+        }
+        index = if end == index { index + 1 } else { end };
+    }
+    lines.join("\n")
+}
 
 pub fn version(program: &str) -> String {
     let mut command = process::sanitized(program);
@@ -154,6 +269,14 @@ pub(crate) fn test_step(
                     ),
                 ));
             } else if !captured.success {
+                let roots = [
+                    crate_dir
+                        .parent()
+                        .and_then(Path::parent)
+                        .unwrap_or(crate_dir),
+                    crate_dir,
+                    target_dir,
+                ];
                 errors.push(Diagnostic::new(
                     diag::CRATE_TEST_FAILED,
                     fixture,
@@ -162,8 +285,8 @@ pub(crate) fn test_step(
                     format!(
                         "cargo test exited {}: stderr: {} stdout: {}",
                         captured.status,
-                        String::from_utf8_lossy(&captured.stderr).trim(),
-                        String::from_utf8_lossy(&captured.stdout).trim()
+                        normalize_cargo_output(&captured.stderr, &roots),
+                        normalize_cargo_output(&captured.stdout, &roots)
                     ),
                 ));
             }
@@ -401,5 +524,54 @@ mod tests {
         assert_eq!(errors[0].exit_class, diag::ExitClass::ToolError);
         assert!(errors[0].message.contains("TV0021 proof"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cargo_stderr_variants_normalize_equal_and_keep_failure() {
+        let root = Path::new("/work/root");
+        let first = format!(
+            "\u{1b}[0mCompiling failing v0.1.0 ({}/crate)\n    Blocking waiting for file lock on package cache\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s\n\nerror: test failed\n",
+            root.display()
+        );
+        let second = format!(
+            "Compiling failing v0.1.0 ({}/crate)\n    Blocking waiting for file lock on build directory\n\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s\nerror: test failed\n",
+            root.display()
+        );
+        let first = normalize_cargo_output(first.as_bytes(), &[root]);
+        let second = normalize_cargo_output(second.as_bytes(), &[root]);
+        assert_eq!(first, second);
+        assert!(first.contains("error: test failed"));
+        assert!(first.contains("target(s) in <time>"));
+        assert!(!first.contains("file lock"));
+        assert!(!first.contains(root.to_str().unwrap()));
+        assert!(!first.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn cargo_test_status_order_is_normalized() {
+        let first = normalize_cargo_output(
+            b"running 2 tests\ntest standard_vectors ... ok\ntest binary_vectors ... ok\ntest injected_failure ... FAILED\n",
+            &[],
+        );
+        let second = normalize_cargo_output(
+            b"running 2 tests\ntest binary_vectors ... ok\ntest standard_vectors ... ok\ntest injected_failure ... FAILED\n",
+            &[],
+        );
+        assert_eq!(first, second);
+        assert!(first.contains("test injected_failure ... FAILED"));
+    }
+
+    #[test]
+    fn cargo_panic_thread_ids_normalize_equal() {
+        let first = normalize_cargo_output(
+            b"thread 't' (123) panicked at src/lib.rs:2:5:\nTV0021 proof\ntest result: FAILED. finished in 0.01s\n",
+            &[],
+        );
+        let second = normalize_cargo_output(
+            b"thread 't' (456) panicked at src/lib.rs:2:5:\nTV0021 proof\ntest result: FAILED. finished in 0.02s\n",
+            &[],
+        );
+        assert_eq!(first, second);
+        assert!(first.contains("thread 't' panicked at src/lib.rs:2:5:"));
     }
 }
