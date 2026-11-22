@@ -56,6 +56,9 @@ optimisation level, runs the same corpus, and compares the transpiled binary
 with the C reference. It also compares the rebuilt binary hash across two
 independent builds. A missing or mismatched transpiler is exit 2, never a skip.
 
+`cargo test` skips the two transpile integration tests when `c2rust` is absent;
+`self-test --transpile` fails closed instead.
+
 Exit codes: `0` all expected verdicts, `1` divergence or expectation failure,
 `2` tool error. A missing compiler, malformed manifest, corrupt lock, or protocol
 violation is never reported as a divergence.
