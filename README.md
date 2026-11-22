@@ -1,72 +1,93 @@
 # C2TV
 
-A translation-validation gate for C→Rust ports.
+A deterministic validation gate for C→Rust ports. Compile both sides, run the
+same corpus, compare observable behaviour, and fail CI with the first
+counterexample.
 
-Compile both sides to LLVM IR, run them on the same inputs, diff observable
-behaviour and undefined-behaviour signals, and fail CI with a counterexample.
-
-Informed by:
-
-> *C-to-Rust Translation Validation at the LLVM IR Level via AI-Assisted
-> Refinement Proof*, arXiv:2611.18036, 13 Nov 2026.
-> https://arxiv.org/abs/2611.18036
-
-Independent work. Not affiliated with or endorsed by the authors.
+Informed by *C-to-Rust Translation Validation at the LLVM IR Level via AI-Assisted
+Refinement Proof* (arXiv:2611.18036). Independent work; not affiliated with the
+authors. The paper proves refinement. This tool does not. It is a gate: a
+heuristic that catches divergence, not a verifier.
 
 ## Status
 
-**Research only.** No design approval, no code. Paper notes in `PAPER.md`.
+Working gate on 26 fixtures: 20 correct ports, 3 deliberately broken ports, and
+3 real algorithms (AES-128, SHA-256, QOI). No soundness claim, no refinement
+proof, no automatic repair.
 
-## Score (portfolio rubric)
+## Use
 
-| I | N | E | Fit | C | Lang | Total |
-|---|---|---|---|---|---|---|
-| 9 | 9 | 4 | 22 | 10 | +2 | **24/33** |
+```sh
+cargo build --offline
+cargo run --offline -- self-test --fixtures fixtures
+```
 
-**Credibility:** B+ — Kim, Ryu, Hong (KAIST), 26-page preprint, no artifact.
+`self-test` builds every fixture with clang and cargo, runs each corpus case at
+matched optimisation levels, compares the declared response classes, and exits
+non-zero on any unexpected verdict. Undeclared fields are reported as not
+compared. A full run takes under two minutes on an arm64 laptop.
 
-## What the paper actually shows
+Check one port:
 
-- Proves refinement between C and Rust **after both are compiled to LLVM IR**,
-  because no shared formal semantics exists at source level.
-- `R2C2` evaluates 519 C programs from a prior C→Rust translation benchmark.
-- Proves 486 translations correct without bounding executions.
-- Finds **three incorrect translations** with valid counterexamples that existing
-  translation-validation tools miss.
+```sh
+cargo run --offline -- check --fixture fixtures/good/crc32 --json
+```
 
-## Honest positioning
+Pin fixture inputs before releasing:
 
-The paper's contribution is proof. A solo product cannot reproduce R2C2's
-refinement proofs in three weeks. The shippable slice is the *gate*: deterministic
-differential validation at IR level, UB instrumentation, and a report a porting
-team can act on. Claim "translation validation", never "verified refinement".
+```sh
+cargo run --offline -- lock --fixtures fixtures
+cargo run --offline -- self-test --fixtures fixtures
+```
 
-## MVP (≤3 weeks)
+Validate the transpiled artifact itself (requires `c2rust` 0.22.1):
 
-1. Input: a C file, its Rust port, and a harness function both expose.
-2. Build both with `-emit-llvm` at `-O0` and `-O2`.
-3. Differential runner: same corpus, compare return values, memory writes, exit
-   codes; sanitize both sides (ASan/UBSan vs Miri where possible).
-4. IR diff: flag functions whose instruction mix diverges beyond a threshold —
-   a triage signal, not a proof.
-5. `c2tv check` → JSON + human report, non-zero exit on divergence.
-6. Fixture set: 20 known-good ports, 3 intentionally broken (bug classes chosen
-   by us, since the paper does not name its three).
+```sh
+cargo run --offline -- self-test --transpile --fixtures fixtures
+```
 
-## Kill gate
+The lane transpiles the declared fixtures, strips compiler-specific features,
+rebuilds with stable Rust at the matched optimisation level, runs the same
+corpus, and compares the transpiled binary with the C reference. A missing or
+mismatched transpiler is exit 2, never a skip.
 
-If the harness cannot detect the three deliberately broken fixtures without
-false-positiving the 20 good ones, stop — the signal is too weak to ship.
+Exit codes: `0` all expected verdicts, `1` divergence or expectation failure,
+`2` tool error. A missing compiler, malformed manifest, corrupt lock, or protocol
+violation is never reported as a divergence.
 
-## Risks / non-goals
+## Truth table
 
-- Not a proof tool. Do not claim soundness.
-- Rust UB and C UB differ; Miri cannot run FFI-heavy code.
-- Benchmark suites may not be redistributable; ship generators instead.
-- LLM-generated translations are the paper's setting; the tool should work on
-  human ports too, but validate on both.
+| Class | Count | Meaning |
+|---|---:|---|
+| good | 20 | correct ports; must show no divergence |
+| bad | 3 | overflow, aliasing, off-by-one; must diverge once, for the declared reason |
+| real | 3 | AES-128, SHA-256, QOI; crate tests plus differential frames |
 
-## Next step
+The paper does not name its three incorrect translations. Ours are declared in
+[`fixtures/README.md`](fixtures/README.md), with the harness ABI, corpus format,
+diagnostic codes, and comparison rules.
 
-Design doc with the fixture list first. The fixtures decide whether the product
-is real.
+## What it catches
+
+- Behavioural divergence between a C function and its Rust port on a declared
+  corpus, at `-O0` and `-O2`.
+- Signed-integer overflow in C, through a UBSan lane attached as evidence.
+- Nondeterministic reports, unpinned fixture inputs, and malformed fixtures.
+
+## What it does not catch
+
+- Refinement or soundness. Passing the gate is not proof of equivalence.
+- Whole-program equivalence, C++, or FFI-heavy crates.
+- Bugs outside the declared corpus or comparison classes.
+- Differences that both implementations share.
+
+## Offline and pinned
+
+Every check path runs with `--offline`; no network fetch. Fixtures are trusted
+code and may still open sockets themselves. The report records
+compiler versions, `c2rust` availability, and sha256 digests of fixture inputs.
+The lock file makes input drift fail closed.
+
+## Licence
+
+Unresolved. Do not redistribute until the owner chooses a licence.
