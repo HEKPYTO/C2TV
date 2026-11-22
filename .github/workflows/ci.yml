@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y llvm-dev clang libclang-dev cmake libssl-dev pkg-config libclang-rt-$(clang -dumpversion | cut -d. -f1)-dev
-          cargo install c2rust --version 0.22.1 --locked
+          cargo install c2rust --version 0.22.1 --locked --force
           version="$(c2rust transpile --version)"
           test "$version" = "transpile 0.22.1"
           sha256="$(sha256sum "$(command -v c2rust)" | cut -d' ' -f1)"
