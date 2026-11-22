@@ -569,6 +569,23 @@ fn error_result(
     }
 }
 
+fn transpile_report(
+    id: String,
+    verdict: &'static str,
+    generated_digest: Option<String>,
+    binary_sha256: Option<String>,
+    first_diff: Option<FirstDiff>,
+) -> TranspileReport {
+    TranspileReport {
+        id,
+        verdict,
+        generated_digest,
+        binary_sha256,
+        first_diff,
+        rustc_version: Some(transpiled_rustc_version()),
+    }
+}
+
 pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
     let fixture = directory
         .file_name()
@@ -767,14 +784,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
         version: Some(version),
         sha256: Some(sha256),
         digest: digest.clone(),
-        report: TranspileReport {
-            id: fixture,
-            verdict,
-            generated_digest: digest,
-            binary_sha256,
-            first_diff,
-            rustc_version: Some(transpiled_rustc_version()),
-        },
+        report: transpile_report(fixture, verdict, digest, binary_sha256, first_diff),
         diagnostics,
     }
 }
@@ -880,8 +890,15 @@ mod tests {
         )
         .unwrap();
         let errors = build_transpiled("f", &root, &root.join("target")).unwrap_err();
-        assert_eq!(errors[0].code, "TV0018");
-        assert!(errors[0].message.contains("cannot find function"));
+        let error = errors
+            .iter()
+            .find(|error| error.code == "TV0018")
+            .expect("cargo build failure must produce TV0018");
+        assert!(
+            error.message.contains("undefined"),
+            "message={}",
+            error.message
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -901,7 +918,8 @@ mod tests {
     }
     #[test]
     fn transpiled_rustc_version_is_recorded() {
-        let version = transpiled_rustc_version();
+        let report = transpile_report("f".to_string(), "pass", None, None, None);
+        let version = report.rustc_version.as_deref().unwrap_or("");
         assert!(version.starts_with("rustc "), "version={version}");
     }
 

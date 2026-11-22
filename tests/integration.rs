@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -286,7 +287,24 @@ fn self_test_transpile_runs_flagged_fixtures() {
     assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let entries = report["transpile"].as_array().unwrap();
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let expected: BTreeSet<String> = ["bad", "good", "real"]
+        .iter()
+        .flat_map(|kind| fs::read_dir(fixture_root.join(kind)).unwrap())
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            let manifest = fs::read_to_string(path.join("port.toml")).unwrap();
+            manifest
+                .contains("transpile = true")
+                .then(|| path.file_name().unwrap().to_string_lossy().into_owned())
+        })
+        .collect();
+    let actual: BTreeSet<String> = entries
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap().to_string())
+        .collect();
     assert_eq!(entries.len(), 5);
+    assert_eq!(actual, expected);
     assert_eq!(report["fixtures"].as_array().unwrap().len(), 26);
     assert!(entries.iter().all(|entry| entry["verdict"] == "pass"));
 }

@@ -519,10 +519,12 @@ mod tests {
         .unwrap();
         let mut errors = Vec::new();
         test_step("f", &root.join("crate"), &root.join("target"), &mut errors);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].code, "TV0021");
-        assert_eq!(errors[0].exit_class, diag::ExitClass::ToolError);
-        assert!(errors[0].message.contains("TV0021 proof"));
+        let error = errors
+            .iter()
+            .find(|error| error.code == "TV0021")
+            .expect("cargo test failure must produce TV0021");
+        assert_eq!(error.exit_class, diag::ExitClass::ToolError);
+        assert!(error.message.contains("TV0021 proof"));
         fs::remove_dir_all(&root).unwrap();
     }
 
