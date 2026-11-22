@@ -90,4 +90,4 @@ The lock file makes input drift fail closed.
 
 ## Licence
 
-Unresolved. Do not redistribute until the owner chooses a licence.
+Apache-2.0. See [`LICENSE`](LICENSE).
