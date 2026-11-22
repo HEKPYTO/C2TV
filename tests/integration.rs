@@ -247,7 +247,13 @@ fn transpile_crc32_matches_c_and_is_deterministic() {
     assert_eq!(first["c2rust_version"], "transpile 0.22.1");
     assert_eq!(first["c2rust_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(first["transpile"][0]["verdict"], "pass");
-    assert!(first["generated_digest"].as_str().unwrap().len() == 64);
+    assert_eq!(
+        first["transpile"][0]["binary_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
 
     let (code, stdout, stderr) = c2tv(&["transpile", "--fixture", argument, "--json"]);
     assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
@@ -256,6 +262,10 @@ fn transpile_crc32_matches_c_and_is_deterministic() {
     assert_eq!(
         first["transpile"][0]["generated_digest"],
         second["transpile"][0]["generated_digest"]
+    );
+    assert_eq!(
+        first["transpile"][0]["binary_sha256"],
+        second["transpile"][0]["binary_sha256"]
     );
 }
 

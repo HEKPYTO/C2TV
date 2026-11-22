@@ -32,6 +32,14 @@ jobs:
 
       - name: Assert clang is present
         run: clang --version
+      - name: Assert ripgrep is present
+        run: |
+          set -euo pipefail
+          if ! rg --version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+          rg --version
 
       - name: Check formatting
         run: cargo fmt --check

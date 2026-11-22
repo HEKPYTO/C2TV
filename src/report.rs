@@ -72,6 +72,8 @@ pub struct TranspileReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generated_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub first_diff: Option<FirstDiff>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rustc_version: Option<String>,
@@ -162,6 +164,9 @@ pub fn human(report: &Report) -> String {
             let _ = writeln!(text, "transpile {}: {}", entry.id, entry.verdict);
             if let Some(version) = &entry.rustc_version {
                 let _ = writeln!(text, "  rustc: {version}");
+            }
+            if let Some(sha256) = &entry.binary_sha256 {
+                let _ = writeln!(text, "  binary sha256: {sha256}");
             }
         }
     }

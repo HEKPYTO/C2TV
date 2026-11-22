@@ -315,12 +315,18 @@ fn build_transpiled(
     target_dir: &Path,
 ) -> Result<PathBuf, Vec<Diagnostic>> {
     let mut command = process::sanitized("cargo");
+    let remap = format!(
+        "--remap-path-prefix={}=/c2tv --remap-path-prefix={}=/c2tv-target",
+        crate_dir.display(),
+        target_dir.display()
+    );
     command
         .args(["build", "--offline", "--release"])
         .current_dir(crate_dir)
         .env("CARGO_TARGET_DIR", target_dir)
         .env("CARGO_NET_OFFLINE", "true")
-        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2");
+        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2")
+        .env("RUSTFLAGS", remap);
     let captured = process::run(&mut command, None, process::BUILD_TIMEOUT).map_err(|error| {
         vec![Diagnostic::new(
             diag::TRANSPILED_BUILD_FAILED,
@@ -403,6 +409,54 @@ fn first_difference(left: &[u8], right: &[u8]) -> Option<usize> {
         .or_else(|| (left.len() != right.len()).then_some(common))
 }
 
+fn main_binary_sha256(
+    fixture: &str,
+    binaries: &[PathBuf],
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<String> {
+    let mut contents = Vec::new();
+    for binary in binaries {
+        match fs::read(binary) {
+            Ok(bytes) => contents.push(bytes),
+            Err(error) => diagnostics.push(Diagnostic::new(
+                diag::TRANSPILED_BUILD_FAILED,
+                fixture,
+                None,
+                None,
+                format!("cannot read main binary: {error}"),
+            )),
+        }
+    }
+    if contents.len() != 2 {
+        return None;
+    }
+    let left_hash = sha256_hex(&contents[0]);
+    let right_hash = sha256_hex(&contents[1]);
+    if left_hash == right_hash {
+        return Some(left_hash);
+    }
+    let offset = first_difference(&contents[0], &contents[1]).unwrap_or(0);
+    let shown = |bytes: &[u8]| {
+        bytes
+            .get(offset)
+            .map_or("<none>".to_string(), |byte| format!("0x{byte:02x}"))
+    };
+    diagnostics.push(Diagnostic::new(
+        diag::TRANSPILED_NONDETERMINISM,
+        fixture,
+        None,
+        None,
+        format!(
+            "transpiled main binaries differ: a={left_hash} b={right_hash}; first difference at byte {offset}: a={} b={}; sizes a={} b={}",
+            shown(&contents[0]),
+            shown(&contents[1]),
+            contents[0].len(),
+            contents[1].len()
+        ),
+    ));
+    None
+}
+
 pub fn combined_digest(entries: &[TranspileReport]) -> Option<String> {
     let mut pairs = Vec::new();
     for entry in entries {
@@ -480,6 +534,7 @@ fn error_result(
             id: fixture,
             verdict: "error",
             generated_digest: None,
+            binary_sha256: None,
             first_diff: None,
             rustc_version: None,
         },
@@ -563,8 +618,15 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
 
     let mut verdict = "error";
     let mut first_diff = None;
-    if let Some(digest) = &digest {
-        let _ = digest;
+    let mut binaries = Vec::new();
+    for root in &roots {
+        match build_transpiled(&fixture, &root.join("out"), &root.join("target")) {
+            Ok(binary) => binaries.push(binary),
+            Err(errors) => diagnostics.extend(errors),
+        }
+    }
+    let binary_sha256 = main_binary_sha256(&fixture, &binaries, &mut diagnostics);
+    if digest.is_some() && binary_sha256.is_some() {
         let c_directory = roots[0].join("c_o2");
         let c_binary = c_directory.join("harness");
         if let Err(error) = fs::create_dir_all(&c_directory) {
@@ -589,8 +651,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
                 false,
                 &mut diagnostics,
             );
-            let rust_binary =
-                build_transpiled(&fixture, &roots[0].join("out"), &roots[0].join("target"));
+            let rust_binary: Result<&PathBuf, Vec<Diagnostic>> = Ok(&binaries[0]);
             match (
                 read_corpus(directory, &fixture, &mut diagnostics),
                 rust_binary,
@@ -600,7 +661,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
                     let mut diverged = false;
                     for (index, payload) in cases.iter().enumerate() {
                         let c_result = run::run(&c_binary, payload, &fixture, index, Level::O2);
-                        let r_result = run::run(&rust_binary, payload, &fixture, index, Level::O2);
+                        let r_result = run::run(rust_binary, payload, &fixture, index, Level::O2);
                         let (c_response, r_response) = match (c_result, r_result) {
                             (Ok((c_response, _)), Ok((r_response, _))) => (c_response, r_response),
                             (c_result, r_result) => {
@@ -683,6 +744,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
             id: fixture,
             verdict,
             generated_digest: digest,
+            binary_sha256,
             first_diff,
             rustc_version: Some(transpiled_rustc_version()),
         },
@@ -776,6 +838,7 @@ mod tests {
             id: id.to_string(),
             verdict: "pass",
             generated_digest: Some(digest.to_string()),
+            binary_sha256: None,
             first_diff: None,
             rustc_version: None,
         };
