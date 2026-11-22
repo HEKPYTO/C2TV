@@ -70,7 +70,11 @@ fn bad(fixture: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::new(diag::MANIFEST_VALUE, fixture, None, None, message)
 }
 
-pub fn parse_manifest(text: &str, dir_name: &str, fixture: &str) -> Result<Manifest, Vec<Diagnostic>> {
+pub fn parse_manifest(
+    text: &str,
+    dir_name: &str,
+    fixture: &str,
+) -> Result<Manifest, Vec<Diagnostic>> {
     let mut errors = Vec::new();
     let value: toml::Value = match toml::from_str(text) {
         Ok(value) => value,
@@ -342,9 +346,10 @@ mod tests {
     fn requires_bug_for_bad_fixtures() {
         let text = TEXT.replace("kind = \"good\"", "kind = \"bad\"");
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains("bug is required")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("bug is required")));
     }
-
 
     #[test]
     fn rejects_empty_classes_and_bug_on_good() {
@@ -352,7 +357,8 @@ mod tests {
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
         assert!(errors
             .iter()
-            .any(|error| error.code == "TV0003" && error.message.contains("classes must not be empty")));
+            .any(|error| error.code == "TV0003"
+                && error.message.contains("classes must not be empty")));
         let text = format!("{TEXT}bug = \"overflow\"\n");
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
         assert!(errors

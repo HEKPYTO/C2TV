@@ -135,7 +135,6 @@ pub const BAD_STATUS: CodeInfo = CodeInfo {
     exit_class: ExitClass::ToolError,
 };
 
-
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Diagnostic {
     pub code: &'static str,
@@ -203,8 +202,20 @@ mod tests {
     #[test]
     fn codes_are_unique_and_contiguous() {
         let codes = [
-            MANIFEST_PARSE, UNKNOWN_KEY, MANIFEST_VALUE, CORPUS_HEX, SPAWN, TIMEOUT,
-            NONZERO_EXIT, DIVERGENCE, UB, SHORT_READ, DIGEST, TRAILING, DETERMINISM, CAPABILITY,
+            MANIFEST_PARSE,
+            UNKNOWN_KEY,
+            MANIFEST_VALUE,
+            CORPUS_HEX,
+            SPAWN,
+            TIMEOUT,
+            NONZERO_EXIT,
+            DIVERGENCE,
+            UB,
+            SHORT_READ,
+            DIGEST,
+            TRAILING,
+            DETERMINISM,
+            CAPABILITY,
             BAD_STATUS,
         ];
         for (index, info) in codes.iter().enumerate() {

@@ -67,11 +67,7 @@ const CORPUS: &str = "-\n01\n0102\nff00\n";
 fn manifest(id: &str, bad: bool) -> String {
     let kind = if bad { "bad" } else { "good" };
     let expected = if bad { "diverge" } else { "pass" };
-    let bug = if bad {
-        "bug = \"off-by-one\"\n"
-    } else {
-        ""
-    };
+    let bug = if bad { "bug = \"off-by-one\"\n" } else { "" };
     format!(
         "schema = 1\nid = \"{id}\"\nkind = \"{kind}\"\nclasses = [\"ret\"]\nexpected = \"{expected}\"\n{bug}note = \"integration fixture\"\n"
     )
@@ -83,7 +79,11 @@ fn write_fixture(parent: &Path, id: &str, delta: bool) -> PathBuf {
     fs::create_dir_all(directory.join("rust").join("src")).unwrap();
     fs::write(directory.join("c").join("main.c"), C_SOURCE).unwrap();
     fs::write(directory.join("rust").join("Cargo.toml"), RUST_MANIFEST).unwrap();
-    fs::write(directory.join("rust").join("src").join("main.rs"), rust_source(delta)).unwrap();
+    fs::write(
+        directory.join("rust").join("src").join("main.rs"),
+        rust_source(delta),
+    )
+    .unwrap();
     fs::write(directory.join("port.toml"), manifest(id, delta)).unwrap();
     fs::write(directory.join("corpus.hex"), CORPUS).unwrap();
     directory
@@ -114,12 +114,7 @@ fn c2tv(args: &[&str]) -> (i32, String, String) {
 fn passing_fixture_exits_zero() {
     let root = sandbox("pass");
     let fixture = write_fixture(&root, "good", false);
-    let (code, stdout, stderr) = c2tv(&[
-        "check",
-        "--fixture",
-        fixture.to_str().unwrap(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
     assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
     assert!(stdout.contains("\"observed\":\"pass\""));
     assert!(stdout.contains("\"clang_version\""));
@@ -131,12 +126,7 @@ fn passing_fixture_exits_zero() {
 fn divergent_fixture_exits_one() {
     let root = sandbox("diverge");
     let fixture = write_fixture(&root, "bad", true);
-    let (code, stdout, stderr) = c2tv(&[
-        "check",
-        "--fixture",
-        fixture.to_str().unwrap(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
     assert_eq!(code, 1, "stderr={stderr}\nstdout={stdout}");
     assert!(stdout.contains("\"observed\":\"diverge\""));
     assert!(stdout.contains("TV0008"));
@@ -172,7 +162,11 @@ fn write_exit_fixture(parent: &Path) -> PathBuf {
     let directory = parent.join("broken");
     fs::create_dir_all(directory.join("c")).unwrap();
     fs::create_dir_all(directory.join("rust").join("src")).unwrap();
-    fs::write(directory.join("c").join("main.c"), "int main(void) { return 7; }\n").unwrap();
+    fs::write(
+        directory.join("c").join("main.c"),
+        "int main(void) { return 7; }\n",
+    )
+    .unwrap();
     fs::write(directory.join("rust").join("Cargo.toml"), RUST_MANIFEST).unwrap();
     fs::write(
         directory.join("rust").join("src").join("main.rs"),
@@ -211,4 +205,19 @@ fn corrupt_lock_is_tool_error() {
     let (code, stdout, _) = c2tv(&["self-test", "--fixtures", root.to_str().unwrap(), "--json"]);
     assert_eq!(code, 2, "stdout={stdout}");
     assert!(stdout.contains("TV0011"));
+}
+
+#[test]
+fn duplicate_ids_across_kinds_fail_closed() {
+    let root = sandbox("duplicates");
+    write_fixture(&root.join("a"), "dup", false);
+    write_fixture(&root.join("m"), "mid", false);
+    write_fixture(&root.join("z"), "dup", false);
+    let (code, stdout, stderr) =
+        c2tv(&["self-test", "--fixtures", root.to_str().unwrap(), "--json"]);
+    assert_eq!(code, 2, "stderr={stderr}\nstdout={stdout}");
+    assert!(stdout.contains("TV0003"), "stdout={stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["fixtures"].as_array().unwrap().len(), 0);
+    assert!(!stdout.contains("TV0008"), "stdout={stdout}");
 }
