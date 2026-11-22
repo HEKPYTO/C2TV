@@ -66,6 +66,7 @@ name = "c2tv"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

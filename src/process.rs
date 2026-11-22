@@ -9,9 +9,9 @@ use std::time::Duration;
 
 #[cfg(unix)]
 fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{pid}")])
-        .status();
+    if pid > 1 && pid <= i32::MAX as u32 {
+        let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+    }
 }
 
 #[cfg(not(unix))]

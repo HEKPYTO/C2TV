@@ -283,6 +283,10 @@ mod tests {
 
     #[test]
     fn unreadable_inputs_and_directories_are_diagnostics() {
+        #[cfg(unix)]
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let mut diagnostics = Vec::new();
         fixture_digests(
             Path::new("/nonexistent/c2tv-fixture"),

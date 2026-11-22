@@ -175,13 +175,13 @@ fn write_exit_fixture(parent: &Path) -> PathBuf {
     fs::create_dir_all(directory.join("rust").join("src")).unwrap();
     fs::write(
         directory.join("c").join("main.c"),
-        "int main(void) { return 7; }\n",
+        "#include <stdio.h>\nint main(void) { while (getchar() != EOF) {} return 7; }\n",
     )
     .unwrap();
     fs::write(directory.join("rust").join("Cargo.toml"), RUST_MANIFEST).unwrap();
     fs::write(
         directory.join("rust").join("src").join("main.rs"),
-        "fn main() { std::process::exit(7); }\n",
+        "use std::io::Read;\nfn main() { let mut sink = Vec::new(); let _ = std::io::stdin().read_to_end(&mut sink); std::process::exit(7); }\n",
     )
     .unwrap();
     fs::write(directory.join("port.toml"), manifest("broken", false)).unwrap();
