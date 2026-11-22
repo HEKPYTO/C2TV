@@ -67,7 +67,11 @@ const CORPUS: &str = "-\n01\n0102\nff00\n";
 fn manifest(id: &str, bad: bool) -> String {
     let kind = if bad { "bad" } else { "good" };
     let expected = if bad { "diverge" } else { "pass" };
-    let bug = if bad { "bug = \"off-by-one\"\n" } else { "" };
+    let bug = if bad {
+        "bug = \"off-by-one\"\nexpect_case = 0\nexpect_class = \"ret\"\n"
+    } else {
+        ""
+    };
     format!(
         "schema = 1\nid = \"{id}\"\nkind = \"{kind}\"\nclasses = [\"ret\"]\nexpected = \"{expected}\"\n{bug}note = \"integration fixture\"\n"
     )
@@ -109,11 +113,16 @@ fn c2tv(args: &[&str]) -> (i32, String, String) {
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
 }
+fn lock_fixtures(root: &Path) {
+    let (code, _, stderr) = c2tv(&["lock", "--fixtures", root.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr={stderr}");
+}
 
 #[test]
 fn passing_fixture_exits_zero() {
     let root = sandbox("pass");
     let fixture = write_fixture(&root, "good", false);
+    lock_fixtures(&root);
     let (code, stdout, stderr) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
     assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
     assert!(stdout.contains("\"observed\":\"pass\""));
@@ -126,6 +135,7 @@ fn passing_fixture_exits_zero() {
 fn divergent_fixture_exits_one() {
     let root = sandbox("diverge");
     let fixture = write_fixture(&root, "bad", true);
+    lock_fixtures(&root);
     let (code, stdout, stderr) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
     assert_eq!(code, 1, "stderr={stderr}\nstdout={stdout}");
     assert!(stdout.contains("\"observed\":\"diverge\""));
@@ -138,6 +148,7 @@ fn self_test_accepts_truth_table_and_detects_digest_drift() {
     let root = sandbox("selftest");
     write_fixture(&root, "good", false);
     write_fixture(&root, "bad", true);
+    lock_fixtures(&root);
     let root_name = root.to_str().unwrap();
 
     let (code, stdout, stderr) = c2tv(&["self-test", "--fixtures", root_name, "--json"]);
@@ -182,6 +193,7 @@ fn write_exit_fixture(parent: &Path) -> PathBuf {
 fn both_side_failures_are_reported() {
     let root = sandbox("bothfail");
     let fixture = write_exit_fixture(&root);
+    lock_fixtures(&root);
     let (code, stdout, _) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
     assert_eq!(code, 2, "stdout={stdout}");
     assert!(stdout.contains("\"observed\":\"error\""));
@@ -265,8 +277,8 @@ fn self_test_transpile_runs_flagged_fixtures() {
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let entries = report["transpile"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
+    assert_eq!(report["fixtures"].as_array().unwrap().len(), 26);
     assert!(entries.iter().all(|entry| entry["verdict"] == "pass"));
-    assert!(report["generated_digest"].as_str().unwrap().len() == 64);
 }
 
 #[test]
@@ -292,4 +304,14 @@ fn missing_transpiler_fails_transpile_self_test_closed() {
     assert_eq!(output.status.code(), Some(2));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("TV0016"), "stdout={stdout}");
+}
+#[test]
+fn check_one_fixture_with_full_lock_passes() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    assert!(fixtures.join("digests.toml").is_file());
+    let fixture = fixtures.join("good").join("crc32");
+    let (code, stdout, stderr) = c2tv(&["check", "--fixture", fixture.to_str().unwrap(), "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    assert!(stdout.contains("\"observed\":\"pass\""));
+    assert!(!stdout.contains("TV0011"), "stdout={stdout}");
 }
