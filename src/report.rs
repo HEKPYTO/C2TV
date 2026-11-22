@@ -55,11 +55,26 @@ pub struct FixtureReport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TranspileReport {
+    pub id: String,
+    pub verdict: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_diff: Option<FirstDiff>,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Report {
     pub schema: u32,
     pub tool: &'static str,
     pub clang_version: String,
     pub rustc_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c2rust_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transpile: Option<Vec<TranspileReport>>,
     pub c2rust_version: Option<String>,
     pub fixtures: Vec<FixtureReport>,
     pub diagnostics: Vec<Diagnostic>,
@@ -72,6 +87,9 @@ pub struct Pipeline {
     pub c2rust_version: Option<String>,
     pub fixtures: Vec<FixtureReport>,
     pub diagnostics: Vec<Diagnostic>,
+    pub c2rust_sha256: Option<String>,
+    pub generated_digest: Option<String>,
+    pub transpile: Option<Vec<TranspileReport>>,
 }
 
 fn sorted(report: &Report) -> Report {
@@ -79,6 +97,9 @@ fn sorted(report: &Report) -> Report {
     result
         .fixtures
         .sort_by(|left, right| left.id.cmp(&right.id));
+    if let Some(entries) = result.transpile.as_mut() {
+        entries.sort_by(|left, right| left.id.cmp(&right.id));
+    }
     result.diagnostics.sort();
     result
 }
@@ -89,6 +110,9 @@ impl Pipeline {
             schema: 1,
             tool: "c2tv",
             clang_version: self.clang_version.clone(),
+            c2rust_sha256: self.c2rust_sha256.clone(),
+            generated_digest: self.generated_digest.clone(),
+            transpile: self.transpile.clone(),
             rustc_version: self.rustc_version.clone(),
             c2rust_version: self.c2rust_version.clone(),
             fixtures: self.fixtures.clone(),
@@ -114,6 +138,17 @@ pub fn human(report: &Report) -> String {
         "c2rust: {}",
         report.c2rust_version.as_deref().unwrap_or("not available")
     );
+    if let Some(sha256) = &report.c2rust_sha256 {
+        let _ = writeln!(text, "c2rust sha256: {sha256}");
+    }
+    if let Some(digest) = &report.generated_digest {
+        let _ = writeln!(text, "generated crate digest: {digest}");
+    }
+    if let Some(entries) = &report.transpile {
+        for entry in entries {
+            let _ = writeln!(text, "transpile {}: {}", entry.id, entry.verdict);
+        }
+    }
     let _ = writeln!(text);
     let _ = writeln!(
         text,
@@ -197,6 +232,9 @@ mod tests {
             clang_version: "clang 23".to_string(),
             rustc_version: "rustc 1.100".to_string(),
             c2rust_version: None,
+            c2rust_sha256: None,
+            generated_digest: None,
+            transpile: None,
             fixtures: ids.iter().map(|id| fixture(id)).collect(),
             diagnostics: vec![],
         }
@@ -210,6 +248,9 @@ mod tests {
         let pipeline = Pipeline {
             clang_version: "clang 23".to_string(),
             rustc_version: "rustc 1.100".to_string(),
+            c2rust_sha256: None,
+            generated_digest: None,
+            transpile: None,
             c2rust_version: None,
             fixtures: right.fixtures.clone(),
             diagnostics: vec![],
@@ -241,6 +282,9 @@ mod tests {
         let pipeline = Pipeline {
             clang_version: value.clang_version.clone(),
             rustc_version: value.rustc_version.clone(),
+            c2rust_sha256: None,
+            generated_digest: None,
+            transpile: None,
             c2rust_version: None,
             fixtures: value.fixtures.clone(),
             diagnostics: value.diagnostics.clone(),

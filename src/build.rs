@@ -30,13 +30,13 @@ pub fn version(program: &str) -> String {
         })
         .unwrap_or_default()
 }
-
-pub fn probe(program: &str) -> Option<String> {
+pub fn probe_args(program: &str, args: &[&str]) -> Option<String> {
     let program = program.to_string();
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let version = Command::new(program)
-            .arg("--version")
+        let version = Command::new(&program)
+            .args(&args)
             .output()
             .ok()
             .filter(|output| output.status.success())
@@ -49,6 +49,14 @@ pub fn probe(program: &str) -> Option<String> {
         let _ = sender.send(version);
     });
     receiver.recv_timeout(Duration::from_secs(2)).ok().flatten()
+}
+
+pub fn probe(program: &str) -> Option<String> {
+    probe_args(program, &["--version"])
+}
+
+pub fn probe_transpile() -> Option<String> {
+    probe_args("c2rust", &["transpile", "--version"])
 }
 
 pub fn probe_c2rust() -> Option<String> {
@@ -95,7 +103,7 @@ fn step(
     }
 }
 
-fn c_step(
+pub(crate) fn c_step(
     fixture: &str,
     level: Level,
     source: &str,

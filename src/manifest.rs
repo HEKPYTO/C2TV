@@ -63,9 +63,19 @@ pub struct Manifest {
     pub kind: Kind,
     pub classes: Vec<Class>,
     pub expected: Verdict,
+    pub transpile: bool,
 }
 
-const KEYS: [&str; 7] = ["schema", "id", "kind", "classes", "expected", "bug", "note"];
+const KEYS: [&str; 8] = [
+    "schema",
+    "id",
+    "kind",
+    "classes",
+    "expected",
+    "bug",
+    "note",
+    "transpile",
+];
 const BUGS: [&str; 3] = ["overflow", "aliasing", "off-by-one"];
 
 fn bad(fixture: &str, message: impl Into<String>) -> Diagnostic {
@@ -230,11 +240,27 @@ pub fn parse_manifest(
         }
     };
 
+    let transpile = match table.get("transpile") {
+        Some(value) => match value.as_bool() {
+            Some(true) if kind != Kind::Good => {
+                errors.push(bad(fixture, "transpile is only valid for good fixtures"));
+                false
+            }
+            Some(flag) => flag,
+            None => {
+                errors.push(bad(fixture, "transpile must be a boolean"));
+                false
+            }
+        },
+        None => false,
+    };
+
     if errors.is_empty() {
         Ok(Manifest {
             kind,
             classes,
             expected,
+            transpile,
         })
     } else {
         Err(errors)
@@ -385,6 +411,7 @@ mod tests {
     #[test]
     fn rejects_empty_classes_and_bug_on_good() {
         let text = TEXT.replace("[\"ret\", \"buf\"]", "[]");
+
         let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
         assert!(errors
             .iter()
@@ -395,6 +422,32 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.code == "TV0003" && error.message.contains("only valid for bad")));
+    }
+
+    #[test]
+    fn parses_transpile_flag_and_rejects_it_on_bad_fixtures() {
+        let text = format!("{TEXT}transpile = true\n");
+        let manifest = parse_manifest(&text, "varint", "varint").unwrap();
+        assert!(manifest.transpile);
+        let text = TEXT
+            .replace("kind = \"good\"", "kind = \"bad\"")
+            .replace("expected = \"pass\"", "expected = \"diverge\"")
+            .replace(
+                "note = \"loop edges\"",
+                "bug = \"off-by-one\"\nnote = \"loop edges\"\ntranspile = true",
+            );
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("transpile is only valid for good")));
+        let text = TEXT.replace("kind = \"good\"", "kind = \"real\"").replace(
+            "note = \"loop edges\"",
+            "note = \"loop edges\"\ntranspile = true",
+        );
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("transpile is only valid for good")));
     }
     #[test]
     fn parses_corpus_cases() {

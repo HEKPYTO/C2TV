@@ -135,6 +135,37 @@ pub const BAD_STATUS: CodeInfo = CodeInfo {
     exit_class: ExitClass::ToolError,
 };
 
+pub const TRANSPILER_VERSION: CodeInfo = CodeInfo {
+    code: "TV0016",
+    name: "transpiler_version_mismatch",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const TRANSPILE_FAILED: CodeInfo = CodeInfo {
+    code: "TV0017",
+    name: "transpile_failed",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const TRANSPILED_BUILD_FAILED: CodeInfo = CodeInfo {
+    code: "TV0018",
+    name: "transpiled_build_failed",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const TRANSPILED_NONDETERMINISM: CodeInfo = CodeInfo {
+    code: "TV0019",
+    name: "transpiled_nondeterminism",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const TRANSPILED_DIVERGENCE: CodeInfo = CodeInfo {
+    code: "TV0020",
+    name: "transpiled_divergence",
+    severity: Severity::Error,
+    exit_class: ExitClass::Fail,
+};
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Diagnostic {
     pub code: &'static str,
@@ -217,6 +248,11 @@ mod tests {
             DETERMINISM,
             CAPABILITY,
             BAD_STATUS,
+            TRANSPILER_VERSION,
+            TRANSPILE_FAILED,
+            TRANSPILED_BUILD_FAILED,
+            TRANSPILED_NONDETERMINISM,
+            TRANSPILED_DIVERGENCE,
         ];
         for (index, info) in codes.iter().enumerate() {
             let expected = format!("TV{:04}", index + 1);
