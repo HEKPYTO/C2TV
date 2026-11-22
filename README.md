@@ -16,9 +16,9 @@ Working gate on 26 fixtures: 20 correct ports, 3 deliberately broken ports, and
 3 real algorithms (AES-128, SHA-256, QOI). No soundness claim, no refinement
 proof, no automatic repair.
 
-Verified on macOS arm64 and Ubuntu 24.04 arm64 (full gate, including the five
-transpiled fixtures), and on Ubuntu 24.04 x86_64 for the core gate. CI targets
-`ubuntu-latest` x86_64 and installs the pinned transpiler before tests.
+Verified on macOS arm64 and Ubuntu 24.04 arm64 with the full gate, including
+the five transpiled fixtures. Hosted CI runs the full gate on Ubuntu 24.04
+x86_64, including lock, tamper, missing-lock, and transpile checks.
 
 ## Use
 
