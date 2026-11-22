@@ -35,6 +35,7 @@ error, never a divergence.
 | `classes` | `ret`, `buf`, `err` | compared fields; anything else is reported `not compared` |
 | `expected` | `pass` / `diverge` | verdict the gate must produce; `real` must be `pass` |
 | `bug` | `overflow` / `aliasing` / `off-by-one` | required for `bad` only |
+| `transpile` | `true` | optional; run the c2rust lane for this `good` fixture |
 | `note` | string | one line, why the fixture exists |
 
 Real fixtures must pass both unit tests in `src/lib.rs` and integration tests
@@ -101,6 +102,23 @@ fixture that differs on a second case is a broken fixture, not a finding.
    a proof.
 6. Determinism: canonical report bytes are identical across two consecutive
    runs. `self-test` fails otherwise.
+
+## Transpile lane
+
+`c2tv transpile --fixture <dir>` transpiles with `c2rust transpile 0.22.1`,
+builds the generated crate offline on stable Rust, and compares exact O2 frames
+against the C reference. Unexpected generated layout is `TV0017`.
+
+| Code | Name | Exit | Meaning |
+|---|---|---|---|
+| `TV0016` | `transpiler_version_mismatch` | 2 | transpiler missing or version is not `transpile 0.22.1` |
+| `TV0017` | `transpile_failed` | 2 | transpile or generated-layout rewrite failed |
+| `TV0018` | `transpiled_build_failed` | 2 | generated crate did not build offline |
+| `TV0019` | `transpiled_nondeterminism` | 2 | two generated crate digests differ |
+| `TV0020` | `transpiled_divergence` | 1 | transpiled and C frames differ; case and first differing byte reported |
+
+`c2tv self-test --transpile --fixtures <dir>` runs this lane for every manifest
+with `transpile = true`. Missing or mismatched transpiler fails closed.
 
 ## Kill gate
 

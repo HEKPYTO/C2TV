@@ -4,3 +4,4 @@ kind = "good"
 classes = ["buf", "err"]
 expected = "pass"
 note = "RFC 4648 base64 codec with strict padding and pad-bit validation"
+transpile = true

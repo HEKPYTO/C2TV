@@ -6,6 +6,7 @@ mod digest;
 mod manifest;
 mod report;
 mod run;
+mod transpile;
 
 use clap::{Parser, Subcommand};
 use diag::{Diagnostic, Level};
@@ -39,13 +40,20 @@ enum Command {
         fixtures: PathBuf,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        transpile: bool,
+    },
+    Transpile {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
     Lock {
         #[arg(long)]
         fixtures: PathBuf,
     },
 }
-
 fn fixture_dirs(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Vec<PathBuf> {
     let fixture = path
         .file_name()
@@ -220,6 +228,9 @@ fn fail_with(diagnostics: Vec<Diagnostic>, json: bool) -> i32 {
         clang_version: build::version("clang"),
         rustc_version: build::version("rustc"),
         c2rust_version: build::probe_c2rust(),
+        c2rust_sha256: None,
+        generated_digest: None,
+        transpile: None,
         fixtures: Vec::new(),
         diagnostics: diagnostics.clone(),
     };
@@ -320,6 +331,9 @@ fn run_pipeline(directories: &[PathBuf], slot: &str) -> Pipeline {
             clang_version,
             rustc_version,
             c2rust_version,
+            c2rust_sha256: None,
+            generated_digest: None,
+            transpile: None,
             fixtures: Vec::new(),
             diagnostics,
         };
@@ -470,6 +484,9 @@ fn run_pipeline(directories: &[PathBuf], slot: &str) -> Pipeline {
         clang_version,
         rustc_version,
         c2rust_version,
+        c2rust_sha256: None,
+        generated_digest: None,
+        transpile: None,
         fixtures,
         diagnostics,
     }
@@ -496,7 +513,39 @@ fn check(fixture: PathBuf, json: bool) -> i32 {
     code
 }
 
-fn self_test(fixtures: PathBuf, json: bool) -> i32 {
+fn transpile_cli(fixture: PathBuf, json: bool) -> i32 {
+    let mut diagnostics = Vec::new();
+    let directories = fixture_dirs(&fixture, &mut diagnostics);
+    if directories.len() != 1 {
+        diagnostics.push(Diagnostic::new(
+            diag::MANIFEST_VALUE,
+            "c2tv",
+            None,
+            None,
+            "expected exactly one fixture directory",
+        ));
+        return fail_with(diagnostics, json);
+    }
+    let lane = transpile::run_lane(&directories[0], "cli");
+    diagnostics.extend(lane.diagnostics);
+    let pipeline = Pipeline {
+        clang_version: build::version("clang"),
+        rustc_version: build::version("rustc"),
+        c2rust_version: lane.version,
+        c2rust_sha256: lane.sha256,
+        generated_digest: lane.digest,
+        transpile: Some(vec![lane.report]),
+        fixtures: Vec::new(),
+        diagnostics: diagnostics.clone(),
+    };
+    let code = diag::exit_code(&diagnostics);
+    emit(&pipeline, json);
+    code
+}
+fn self_test(fixtures: PathBuf, json: bool, transpile_enabled: bool) -> i32 {
+    if transpile_enabled {
+        return self_test_transpile(fixtures, json);
+    }
     let mut diagnostics = Vec::new();
     let directories = fixture_dirs(&fixtures, &mut diagnostics);
     if directories.is_empty() {
@@ -571,6 +620,9 @@ fn self_test(fixtures: PathBuf, json: bool) -> i32 {
         clang_version: first.clang_version,
         rustc_version: first.rustc_version,
         c2rust_version: first.c2rust_version,
+        c2rust_sha256: first.c2rust_sha256.clone(),
+        generated_digest: first.generated_digest.clone(),
+        transpile: first.transpile.clone(),
         fixtures: first.fixtures,
         diagnostics: diagnostics.clone(),
     };
@@ -579,6 +631,79 @@ fn self_test(fixtures: PathBuf, json: bool) -> i32 {
     code
 }
 
+fn self_test_transpile(fixtures: PathBuf, json: bool) -> i32 {
+    let mut diagnostics = Vec::new();
+    if let Err(error) = transpile::check_version(build::probe_transpile()) {
+        return fail_with(vec![error], json);
+    }
+    let sha256 = match transpile::binary_sha256("c2rust") {
+        Ok(sha256) => sha256,
+        Err(error) => return fail_with(vec![error], json),
+    };
+    let directories = fixture_dirs(&fixtures, &mut diagnostics);
+    if directories.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            diag::MANIFEST_VALUE,
+            "c2tv",
+            None,
+            None,
+            "no fixtures found",
+        ));
+        return fail_with(diagnostics, json);
+    }
+    let mut selected = Vec::new();
+    for directory in directories {
+        let id = directory
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(text) = read_fixture_input(
+            &directory.join("port.toml"),
+            &id,
+            diag::MANIFEST_PARSE,
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        match manifest::parse_manifest(&text, &id, &id) {
+            Ok(manifest) if manifest.transpile => selected.push(directory),
+            Ok(_) => {}
+            Err(errors) => diagnostics.extend(errors),
+        }
+    }
+    if selected.is_empty() {
+        diagnostics.push(Diagnostic::new(
+            diag::MANIFEST_VALUE,
+            "c2tv",
+            None,
+            None,
+            "no transpile fixtures found",
+        ));
+        return fail_with(diagnostics, json);
+    }
+    let mut reports = Vec::new();
+    let mut version = None;
+    for (index, directory) in selected.iter().enumerate() {
+        let lane = transpile::run_lane(directory, &format!("selftest-{index}"));
+        version = lane.version.or(version);
+        diagnostics.extend(lane.diagnostics);
+        reports.push(lane.report);
+    }
+    let digest = transpile::combined_digest(&reports);
+    let pipeline = Pipeline {
+        clang_version: build::version("clang"),
+        rustc_version: build::version("rustc"),
+        c2rust_version: version.or_else(build::probe_transpile),
+        c2rust_sha256: Some(sha256),
+        generated_digest: digest,
+        transpile: Some(reports),
+        fixtures: Vec::new(),
+        diagnostics: diagnostics.clone(),
+    };
+    let code = diag::exit_code(&diagnostics);
+    emit(&pipeline, json);
+    code
+}
 fn lock(fixtures: PathBuf) -> i32 {
     let mut diagnostics = Vec::new();
     let directories = fixture_dirs(&fixtures, &mut diagnostics);
@@ -609,6 +734,9 @@ fn lock(fixtures: PathBuf) -> i32 {
                     clang_version: build::version("clang"),
                     rustc_version: build::version("rustc"),
                     c2rust_version: build::probe_c2rust(),
+                    c2rust_sha256: None,
+                    generated_digest: None,
+                    transpile: None,
                     fixtures: Vec::new(),
                     diagnostics,
                 }
@@ -633,7 +761,12 @@ fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
         Command::Check { fixture, json } => check(fixture, json),
-        Command::SelfTest { fixtures, json } => self_test(fixtures, json),
+        Command::SelfTest {
+            fixtures,
+            json,
+            transpile,
+        } => self_test(fixtures, json, transpile),
+        Command::Transpile { fixture, json } => transpile_cli(fixture, json),
         Command::Lock { fixtures } => lock(fixtures),
     };
     std::process::exit(code);

@@ -221,3 +221,75 @@ fn duplicate_ids_across_kinds_fail_closed() {
     assert_eq!(report["fixtures"].as_array().unwrap().len(), 0);
     assert!(!stdout.contains("TV0008"), "stdout={stdout}");
 }
+
+#[test]
+fn transpile_crc32_matches_c_and_is_deterministic() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join("good")
+        .join("crc32");
+    let argument = fixture.to_str().unwrap();
+    let (code, stdout, stderr) = c2tv(&["transpile", "--fixture", argument, "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    let first: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(first["c2rust_version"], "transpile 0.22.1");
+    assert_eq!(first["c2rust_sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(first["transpile"][0]["verdict"], "pass");
+    assert!(first["generated_digest"].as_str().unwrap().len() == 64);
+
+    let (code, stdout, stderr) = c2tv(&["transpile", "--fixture", argument, "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    let second: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(first["generated_digest"], second["generated_digest"]);
+    assert_eq!(
+        first["transpile"][0]["generated_digest"],
+        second["transpile"][0]["generated_digest"]
+    );
+}
+
+#[test]
+fn self_test_transpile_runs_flagged_fixtures() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let (code, stdout, stderr) = c2tv(&[
+        "self-test",
+        "--transpile",
+        "--fixtures",
+        &fixtures,
+        "--json",
+    ]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let entries = report["transpile"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| entry["verdict"] == "pass"));
+    assert!(report["generated_digest"].as_str().unwrap().len() == 64);
+}
+
+#[test]
+fn missing_transpiler_fails_transpile_self_test_closed() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let empty_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/integration-empty-path");
+    fs::create_dir_all(&empty_path).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_c2tv"))
+        .args([
+            "self-test",
+            "--transpile",
+            "--fixtures",
+            &fixtures,
+            "--json",
+        ])
+        .env("PATH", &empty_path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("TV0016"), "stdout={stdout}");
+}
