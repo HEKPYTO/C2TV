@@ -4,16 +4,15 @@ use crate::compare::Observation;
 use crate::diag::{self, Diagnostic, Level};
 use crate::digest::sha256_hex;
 use crate::manifest;
-use crate::report::TranspileReport;
+use crate::process;
+use crate::report::{self, TranspileReport};
 use crate::run;
 
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
+use std::time::{SystemTime, UNIX_EPOCH};
 const EXPECTED_VERSION: &str = "transpile 0.22.1";
 const SFILEX_STRUCT: &str = "#[repr(C)]\npub struct __sFILEX {\n    _private: [u8; 0],\n}\n";
 const GENERATED_FILES: [&str; 4] = ["Cargo.toml", "build.rs", "lib.rs", "src/main.rs"];
@@ -254,19 +253,10 @@ fn transpile_once(
     let source_arg = source.to_string_lossy().into_owned();
     let out_arg = out.to_string_lossy().into_owned();
     let args = ["transpile", "-b", "main", "-o", &out_arg, &source_arg];
-    match Command::new("c2rust").args(args).output() {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
-            diagnostics.push(transpile_error(
-                fixture,
-                format!(
-                    "c2rust transpile exited {}: {}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
-            return None;
-        }
+    let mut command = process::sanitized("c2rust");
+    command.args(args);
+    let captured = match process::run(&mut command, None, process::BUILD_TIMEOUT) {
+        Ok(captured) => captured,
         Err(error) => {
             diagnostics.push(transpile_error(
                 fixture,
@@ -274,6 +264,41 @@ fn transpile_once(
             ));
             return None;
         }
+    };
+    if captured.truncated {
+        diagnostics.push(diag::truncation(
+            fixture,
+            None,
+            None,
+            format!(
+                "c2rust transpile output exceeded {} byte budget",
+                process::OUTPUT_CAP
+            ),
+        ));
+    }
+    if captured.timed_out {
+        diagnostics.push(Diagnostic::new(
+            diag::TIMEOUT,
+            fixture,
+            None,
+            None,
+            format!(
+                "c2rust transpile exceeded {}ms timeout",
+                process::BUILD_TIMEOUT.as_millis()
+            ),
+        ));
+        return None;
+    }
+    if !captured.success {
+        diagnostics.push(transpile_error(
+            fixture,
+            format!(
+                "c2rust transpile exited {}: {}",
+                captured.status,
+                String::from_utf8_lossy(&captured.stderr).trim()
+            ),
+        ));
+        return None;
     }
     match postprocess(&out, fixture) {
         Ok(digest) => Some(digest),
@@ -288,45 +313,74 @@ fn build_transpiled(
     fixture: &str,
     crate_dir: &Path,
     target_dir: &Path,
-) -> Result<PathBuf, Diagnostic> {
-    let output = Command::new("cargo")
+) -> Result<PathBuf, Vec<Diagnostic>> {
+    let mut command = process::sanitized("cargo");
+    command
         .args(["build", "--offline", "--release"])
         .current_dir(crate_dir)
         .env("CARGO_TARGET_DIR", target_dir)
         .env("CARGO_NET_OFFLINE", "true")
-        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2")
-        .output()
-        .map_err(|error| {
-            Diagnostic::new(
-                diag::TRANSPILED_BUILD_FAILED,
-                fixture,
-                None,
-                None,
-                format!("cannot run cargo build: {error}"),
-            )
-        })?;
-    if !output.status.success() {
-        return Err(Diagnostic::new(
+        .env("CARGO_PROFILE_RELEASE_OPT_LEVEL", "2");
+    let captured = process::run(&mut command, None, process::BUILD_TIMEOUT).map_err(|error| {
+        vec![Diagnostic::new(
+            diag::TRANSPILED_BUILD_FAILED,
+            fixture,
+            None,
+            None,
+            format!("cannot run cargo build: {error}"),
+        )]
+    })?;
+    let mut errors = Vec::new();
+    if captured.truncated {
+        errors.push(diag::truncation(
+            fixture,
+            None,
+            None,
+            format!(
+                "cargo build output exceeded {} byte budget",
+                process::OUTPUT_CAP
+            ),
+        ));
+    }
+    if captured.timed_out {
+        errors.push(Diagnostic::new(
+            diag::TIMEOUT,
+            fixture,
+            None,
+            None,
+            format!(
+                "cargo build exceeded {}ms timeout",
+                process::BUILD_TIMEOUT.as_millis()
+            ),
+        ));
+        return Err(errors);
+    }
+    if !captured.success {
+        errors.push(Diagnostic::new(
             diag::TRANSPILED_BUILD_FAILED,
             fixture,
             None,
             None,
             format!(
                 "cargo build exited {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
+                captured.status,
+                String::from_utf8_lossy(&captured.stderr).trim()
             ),
         ));
+        return Err(errors);
+    }
+    if !errors.is_empty() {
+        return Err(errors);
     }
     let binary = target_dir.join("release").join("main");
     if !binary.is_file() {
-        return Err(Diagnostic::new(
+        return Err(vec![Diagnostic::new(
             diag::TRANSPILED_BUILD_FAILED,
             fixture,
             None,
             None,
             "cargo build produced no main binary",
-        ));
+        )]);
     }
     Ok(binary)
 }
@@ -363,20 +417,53 @@ pub fn combined_digest(entries: &[TranspileReport]) -> Option<String> {
 }
 
 fn prepare_root(root: &Path, diagnostics: &mut Vec<Diagnostic>) -> bool {
-    match fs::remove_dir_all(root) {
-        Ok(()) => true,
-        Err(error) if error.kind() == ErrorKind::NotFound => true,
+    if fs::symlink_metadata(root).is_ok() {
+        diagnostics.push(Diagnostic::new(
+            diag::SPAWN,
+            "c2tv",
+            None,
+            None,
+            format!("transpile work root already exists: {}", root.display()),
+        ));
+        return false;
+    }
+    if let Err(error) = fs::create_dir(root) {
+        diagnostics.push(Diagnostic::new(
+            diag::SPAWN,
+            "c2tv",
+            None,
+            None,
+            format!("cannot create transpile work root: {error}"),
+        ));
+        return false;
+    }
+    match fs::symlink_metadata(root) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => true,
+        Ok(_) => {
+            diagnostics.push(Diagnostic::new(
+                diag::SPAWN,
+                "c2tv",
+                None,
+                None,
+                "transpile work root became a symlink",
+            ));
+            false
+        }
         Err(error) => {
             diagnostics.push(Diagnostic::new(
                 diag::SPAWN,
                 "c2tv",
                 None,
                 None,
-                format!("cannot clean transpile work root: {error}"),
+                format!("cannot verify transpile work root: {error}"),
             ));
             false
         }
     }
+}
+
+pub fn transpiled_rustc_version() -> String {
+    build::version("rustc")
 }
 
 fn error_result(
@@ -394,6 +481,7 @@ fn error_result(
             verdict: "error",
             generated_digest: None,
             first_diff: None,
+            rustc_version: None,
         },
         diagnostics,
     }
@@ -419,9 +507,13 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
             return error_result(fixture, Some(version), None, diagnostics);
         }
     };
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
     let roots = ["a", "b"].map(|side| {
         env::temp_dir().join(format!(
-            "c2tv-transpile-{fixture}-{}-{slot}-{side}",
+            "c2tv-transpile-{fixture}-{}-{slot}-{nonce}-{side}",
             std::process::id()
         ))
     });
@@ -513,22 +605,36 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
                             (Ok((c_response, _)), Ok((r_response, _))) => (c_response, r_response),
                             (c_result, r_result) => {
                                 for result in [c_result, r_result] {
-                                    if let Err(error) = result {
-                                        diagnostics.push(error);
+                                    if let Err(errors) = result {
+                                        diagnostics.extend(errors);
                                     }
                                 }
                                 errored = true;
                                 continue;
                             }
                         };
+                        for observation in [&c_response, &r_response] {
+                            if observation.out.len() > report::OUT_HEX_CAP {
+                                diagnostics.push(diag::truncation(
+                                    &fixture,
+                                    Some(index),
+                                    Some(Level::O2),
+                                    format!(
+                                        "response out_hex truncated to {} bytes from {}",
+                                        report::OUT_HEX_CAP,
+                                        observation.out.len()
+                                    ),
+                                ));
+                            }
+                        }
                         let left = exact_frame(&c_response);
                         let right = exact_frame(&r_response);
                         if let Some(offset) = first_difference(&left, &right) {
                             let difference = FirstDiff {
                                 field: "frame",
                                 offset,
-                                c: left[offset],
-                                r: right[offset],
+                                c: left.get(offset).copied().unwrap_or(0),
+                                r: right.get(offset).copied().unwrap_or(0),
                             };
                             diagnostics.push(Diagnostic::new(
                                 diag::TRANSPILED_DIVERGENCE,
@@ -551,7 +657,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
                         "pass"
                     };
                 }
-                (_, Err(error)) => diagnostics.push(error),
+                (_, Err(errors)) => diagnostics.extend(errors),
                 (None, _) => {}
             }
         }
@@ -578,6 +684,7 @@ pub fn run_lane(directory: &Path, slot: &str) -> LaneResult {
             verdict,
             generated_digest: digest,
             first_diff,
+            rustc_version: Some(transpiled_rustc_version()),
         },
         diagnostics,
     }
@@ -657,9 +764,9 @@ mod tests {
             "fn main() { undefined(); }\n",
         )
         .unwrap();
-        let error = build_transpiled("f", &root, &root.join("target")).unwrap_err();
-        assert_eq!(error.code, "TV0018");
-        assert!(error.message.contains("cannot find function"));
+        let errors = build_transpiled("f", &root, &root.join("target")).unwrap_err();
+        assert_eq!(errors[0].code, "TV0018");
+        assert!(errors[0].message.contains("cannot find function"));
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -670,9 +777,32 @@ mod tests {
             verdict: "pass",
             generated_digest: Some(digest.to_string()),
             first_diff: None,
+            rustc_version: None,
         };
         let left = combined_digest(&[entry("a", "aa"), entry("b", "bb")]).unwrap();
         let right = combined_digest(&[entry("b", "bb"), entry("a", "aa")]).unwrap();
         assert_eq!(left, right);
+    }
+    #[test]
+    fn transpiled_rustc_version_is_recorded() {
+        let version = transpiled_rustc_version();
+        assert!(version.starts_with("rustc "), "version={version}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_work_root_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = env::temp_dir().join(format!("c2tv-transpile-root-{}", std::process::id()));
+        let target = env::temp_dir().join(format!("c2tv-transpile-target-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&target);
+        fs::create_dir_all(&target).unwrap();
+        symlink(&target, &root).unwrap();
+        let mut diagnostics = Vec::new();
+        assert!(!prepare_root(&root, &mut diagnostics));
+        assert_eq!(diagnostics[0].code, "TV0005");
+        fs::remove_dir_all(&target).unwrap();
+        fs::remove_file(&root).unwrap();
     }
 }

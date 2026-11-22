@@ -1,35 +1,14 @@
 use crate::abi;
 use crate::compare::Observation;
 use crate::diag::{self, Diagnostic, Level};
-use std::io::{Read, Write};
+use crate::process::{self, Captured};
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
-const TIMEOUT: Duration = Duration::from_secs(10);
+const STDERR_TAIL: usize = 2048;
 
-struct Raw {
-    output: Vec<u8>,
-    errors: Vec<u8>,
-    success: bool,
-}
-
-fn drain(mut reader: impl Read) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    let _ = reader.read_to_end(&mut bytes);
-    bytes
-}
-
-fn reap(
-    child: &mut std::process::Child,
-    output_thread: thread::JoinHandle<Vec<u8>>,
-    error_thread: thread::JoinHandle<Vec<u8>>,
-) {
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = output_thread.join();
-    let _ = error_thread.join();
+fn stderr_tail(bytes: &[u8]) -> String {
+    let start = bytes.len().saturating_sub(STDERR_TAIL);
+    String::from_utf8_lossy(&bytes[start..]).trim().to_string()
 }
 
 fn execute(
@@ -38,119 +17,66 @@ fn execute(
     fixture: &str,
     case: usize,
     level: Level,
-) -> Result<Raw, Diagnostic> {
-    let request = abi::encode_request(payload).ok_or_else(|| {
-        Diagnostic::new(
-            diag::CORPUS_HEX,
-            fixture,
-            Some(case),
-            Some(level),
-            "payload exceeds u32 length",
-        )
-    })?;
-    let mut child = Command::new(binary)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            Diagnostic::new(
+) -> Result<Captured, Vec<Diagnostic>> {
+    let request = abi::encode_request(payload)
+        .map_err(|error| vec![error.diagnostic(fixture, case, level)])?;
+    let mut command = process::sanitized(binary);
+    let captured =
+        process::run(&mut command, Some(&request), process::HARNESS_TIMEOUT).map_err(|error| {
+            vec![Diagnostic::new(
                 diag::SPAWN,
                 fixture,
                 Some(case),
                 Some(level),
                 format!("cannot start harness: {error}"),
-            )
+            )]
         })?;
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let output_thread = thread::spawn(move || drain(stdout));
-    let error_thread = thread::spawn(move || drain(stderr));
-
-    let mut stdin = child.stdin.take().unwrap();
-    if let Err(error) = stdin.write_all(&request) {
-        drop(stdin);
-        let exited = matches!(child.try_wait(), Ok(Some(_)));
-        reap(&mut child, output_thread, error_thread);
-        let code = if exited {
-            diag::NONZERO_EXIT
+    let mut errors = Vec::new();
+    if captured.truncated {
+        errors.push(diag::truncation(
+            fixture,
+            Some(case),
+            Some(level),
+            format!(
+                "harness output exceeded {} byte budget",
+                process::OUTPUT_CAP
+            ),
+        ));
+    }
+    if captured.timed_out {
+        errors.push(Diagnostic::new(
+            diag::TIMEOUT,
+            fixture,
+            Some(case),
+            Some(level),
+            format!(
+                "harness exceeded {}ms timeout",
+                process::HARNESS_TIMEOUT.as_millis()
+            ),
+        ));
+    }
+    if let Some(error) = &captured.write_error {
+        let (code, message) = if captured.success {
+            (
+                diag::NONZERO_EXIT,
+                "harness exited before accepting request",
+            )
         } else {
-            diag::SPAWN
+            (diag::SPAWN, "cannot write request")
         };
-        let message = if exited {
-            format!("harness exited before accepting request: {error}")
-        } else {
-            format!("cannot write request: {error}")
-        };
-        return Err(Diagnostic::new(
+        errors.push(Diagnostic::new(
             code,
             fixture,
             Some(case),
             Some(level),
-            message,
+            format!("{message}: {error}"),
         ));
     }
-    drop(stdin);
-
-    let deadline = Instant::now() + TIMEOUT;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                reap(&mut child, output_thread, error_thread);
-                return Err(Diagnostic::new(
-                    diag::SPAWN,
-                    fixture,
-                    Some(case),
-                    Some(level),
-                    format!("cannot wait for harness: {error}"),
-                ));
-            }
-        }
-        if Instant::now() >= deadline {
-            reap(&mut child, output_thread, error_thread);
-            return Err(Diagnostic::new(
-                diag::TIMEOUT,
-                fixture,
-                Some(case),
-                Some(level),
-                "harness exceeded 10000ms timeout",
-            ));
-        }
-        thread::sleep(Duration::from_millis(2));
-    };
-
-    let output = match output_thread.join() {
-        Ok(output) => output,
-        Err(_) => {
-            return Err(Diagnostic::new(
-                diag::SPAWN,
-                fixture,
-                Some(case),
-                Some(level),
-                "stdout drain thread failed",
-            ));
-        }
-    };
-    let errors = match error_thread.join() {
-        Ok(errors) => errors,
-        Err(_) => {
-            return Err(Diagnostic::new(
-                diag::SPAWN,
-                fixture,
-                Some(case),
-                Some(level),
-                "stderr drain thread failed",
-            ));
-        }
-    };
-    Ok(Raw {
-        output,
-        errors,
-        success: status.success(),
-    })
+    if errors.is_empty() {
+        Ok(captured)
+    } else {
+        Err(errors)
+    }
 }
 
 pub fn run(
@@ -159,20 +85,23 @@ pub fn run(
     fixture: &str,
     case: usize,
     level: Level,
-) -> Result<(Observation, String), Diagnostic> {
+) -> Result<(Observation, String), Vec<Diagnostic>> {
     let raw = execute(binary, payload, fixture, case, level)?;
     if !raw.success {
-        return Err(Diagnostic::new(
+        return Err(vec![Diagnostic::new(
             diag::NONZERO_EXIT,
             fixture,
             Some(case),
             Some(level),
-            "harness exited non-zero",
-        ));
+            format!(
+                "harness exited non-zero; stderr tail: {}",
+                stderr_tail(&raw.stderr)
+            ),
+        )]);
     }
-    let response =
-        abi::parse_response(&raw.output).map_err(|error| error.diagnostic(fixture, case, level))?;
-    Ok((response, String::from_utf8_lossy(&raw.errors).into_owned()))
+    let response = abi::parse_response(&raw.stdout)
+        .map_err(|error| vec![error.diagnostic(fixture, case, level)])?;
+    Ok((response, String::from_utf8_lossy(&raw.stderr).into_owned()))
 }
 
 pub fn run_ubsan(
@@ -183,9 +112,9 @@ pub fn run_ubsan(
 ) -> (Option<String>, Vec<Diagnostic>) {
     let raw = match execute(binary, payload, fixture, case, Level::O0) {
         Ok(raw) => raw,
-        Err(diagnostic) => return (None, vec![diagnostic]),
+        Err(errors) => return (None, errors),
     };
-    let stderr = String::from_utf8_lossy(&raw.errors).into_owned();
+    let stderr = String::from_utf8_lossy(&raw.stderr).into_owned();
     if let Some(event) = first_ub(&stderr) {
         return (Some(event), Vec::new());
     }
@@ -197,11 +126,14 @@ pub fn run_ubsan(
                 fixture,
                 Some(case),
                 Some(Level::O0),
-                "ubsan harness exited non-zero",
+                format!(
+                    "ubsan harness exited non-zero; stderr tail: {}",
+                    stderr_tail(&raw.stderr)
+                ),
             )],
         );
     }
-    match abi::parse_response(&raw.output) {
+    match abi::parse_response(&raw.stdout) {
         Ok(_) => (None, Vec::new()),
         Err(error) => (None, vec![error.diagnostic(fixture, case, Level::O0)]),
     }
@@ -240,7 +172,7 @@ mod tests {
 
     #[test]
     fn spawn_failure_is_typed() {
-        let error = run(
+        let errors = run(
             Path::new("/nonexistent/c2tv-harness"),
             &[],
             "f",
@@ -248,36 +180,45 @@ mod tests {
             Level::O0,
         )
         .unwrap_err();
-        assert_eq!(error.code, "TV0005");
+        assert_eq!(errors[0].code, "TV0005");
     }
 
     #[test]
     fn short_read_trailing_and_bad_status_are_distinct() {
         let short = script("printf 'abc'");
-        let error = run(&short, &[], "f", 1, Level::O0).unwrap_err();
-        assert_eq!(error.code, "TV0010");
+        let errors = run(&short, &[], "f", 1, Level::O0).unwrap_err();
+        assert_eq!(errors[0].code, "TV0010");
 
         let trailing = script("dd if=/dev/zero bs=1 count=21 2>/dev/null");
-        let error = run(&trailing, &[], "f", 2, Level::O0).unwrap_err();
-        assert_eq!(error.code, "TV0012");
+        let errors = run(&trailing, &[], "f", 2, Level::O0).unwrap_err();
+        assert_eq!(errors[0].code, "TV0012");
 
         let bad_status = script("perl -e 'print pack(\"Q<\",2),pack(\"Q<\",0),pack(\"V\",0)'");
-        let error = run(&bad_status, &[], "f", 3, Level::O0).unwrap_err();
-        assert_eq!(error.code, "TV0015");
+        let errors = run(&bad_status, &[], "f", 3, Level::O0).unwrap_err();
+        assert_eq!(errors[0].code, "TV0015");
     }
 
     #[test]
-    fn nonzero_exit_is_typed() {
-        let path = script("exit 7");
-        let error = run(&path, &[], "f", 0, Level::O0).unwrap_err();
-        assert_eq!(error.code, "TV0007");
+    fn nonzero_exit_is_typed_with_stderr_tail() {
+        let path = script("printf 'triage marker' >&2; exit 7");
+        let errors = run(&path, &[], "f", 0, Level::O0).unwrap_err();
+        assert_eq!(errors[0].code, "TV0007");
+        assert!(errors[0].message.contains("triage marker"));
     }
 
     #[test]
-    fn write_failure_to_exited_child_is_typed() {
-        let path = script("exit 0");
-        let payload = vec![0u8; 2_000_000];
-        let error = run(&path, &payload, "f", 0, Level::O0).unwrap_err();
-        assert!(error.code == "TV0005" || error.code == "TV0007");
+    fn oversized_payload_is_rejected_before_spawn() {
+        let path = script("printf 'spawned' >&2; exit 0");
+        let payload = vec![0u8; abi::REQUEST_CAP + 1];
+        let errors = run(&path, &payload, "f", 0, Level::O0).unwrap_err();
+        assert_eq!(errors[0].code, "TV0004");
+        assert!(!errors[0].message.contains("spawned"));
+    }
+
+    #[test]
+    fn oversized_harness_output_is_flagged() {
+        let path = script("head -c 2000000 /dev/zero");
+        let errors = run(&path, &[], "f", 0, Level::O0).unwrap_err();
+        assert!(errors.iter().any(|error| error.code == "TV0022"));
     }
 }

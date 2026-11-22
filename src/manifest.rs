@@ -1,3 +1,5 @@
+use crate::abi;
+
 use crate::diag::{self, Diagnostic};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,9 +66,10 @@ pub struct Manifest {
     pub classes: Vec<Class>,
     pub expected: Verdict,
     pub transpile: bool,
+    pub expect_case: Option<usize>,
+    pub expect_class: Option<Class>,
 }
-
-const KEYS: [&str; 8] = [
+const KEYS: [&str; 10] = [
     "schema",
     "id",
     "kind",
@@ -75,6 +78,8 @@ const KEYS: [&str; 8] = [
     "bug",
     "note",
     "transpile",
+    "expect_case",
+    "expect_class",
 ];
 const BUGS: [&str; 3] = ["overflow", "aliasing", "off-by-one"];
 
@@ -228,6 +233,43 @@ pub fn parse_manifest(
         None => None,
     };
 
+    let expect_case = match table.get("expect_case") {
+        Some(_) if kind != Kind::Bad => {
+            errors.push(bad(fixture, "expect_case is only valid for bad fixtures"));
+            None
+        }
+        Some(value) => match value.as_integer() {
+            Some(number) if number >= 0 => Some(number as usize),
+            _ => {
+                errors.push(bad(fixture, "expect_case must be a non-negative integer"));
+                None
+            }
+        },
+        None if kind == Kind::Bad => {
+            errors.push(bad(fixture, "expect_case is required for bad fixtures"));
+            None
+        }
+        None => None,
+    };
+    let expect_class = match table.get("expect_class") {
+        Some(_) if kind != Kind::Bad => {
+            errors.push(bad(fixture, "expect_class is only valid for bad fixtures"));
+            None
+        }
+        Some(value) => match value.as_str().and_then(Class::parse) {
+            Some(class) => Some(class),
+            None => {
+                errors.push(bad(fixture, "expect_class must be ret, buf, or err"));
+                None
+            }
+        },
+        None if kind == Kind::Bad => {
+            errors.push(bad(fixture, "expect_class is required for bad fixtures"));
+            None
+        }
+        None => None,
+    };
+
     let _note = match table.get("note").and_then(toml::Value::as_str) {
         Some(note) if !note.contains('\n') && !note.contains('\r') => note.to_string(),
         Some(_) => {
@@ -261,6 +303,8 @@ pub fn parse_manifest(
             classes,
             expected,
             transpile,
+            expect_case,
+            expect_class,
         })
     } else {
         Err(errors)
@@ -302,6 +346,16 @@ pub fn parse_corpus(text: &str, fixture: &str) -> Result<Vec<Vec<u8>>, Vec<Diagn
                 Some(index),
                 None,
                 "corpus line has an odd number of hex digits",
+            ));
+            continue;
+        }
+        if line.len() / 2 > abi::REQUEST_CAP {
+            errors.push(Diagnostic::new(
+                diag::CORPUS_HEX,
+                fixture,
+                Some(index),
+                None,
+                format!("corpus line exceeds {}-byte request cap", abi::REQUEST_CAP),
             ));
             continue;
         }
@@ -471,5 +525,53 @@ mod tests {
         let errors = parse_corpus("", "f").unwrap_err();
         assert_eq!(errors[0].code, "TV0004");
         assert_eq!(errors[0].case, None);
+    }
+    #[test]
+    fn parses_expected_divergence_fields() {
+        let text = TEXT
+            .replace("kind = \"good\"", "kind = \"bad\"")
+            .replace("expected = \"pass\"", "expected = \"diverge\"")
+            .replace(
+                "note = \"loop edges\"",
+                "bug = \"overflow\"\nexpect_case = 5\nexpect_class = \"ret\"\nnote = \"loop edges\"",
+            );
+        let manifest = parse_manifest(&text, "varint", "varint").unwrap();
+        assert_eq!(manifest.expect_case, Some(5));
+        assert_eq!(manifest.expect_class, Some(Class::Ret));
+        let text = text.replace("expect_class = \"ret\"", "expect_class = \"err\"");
+        let manifest = parse_manifest(&text, "varint", "varint").unwrap();
+        assert_eq!(manifest.expect_class, Some(Class::Err));
+    }
+
+    #[test]
+    fn bad_fixtures_require_both_expectation_fields() {
+        let text = TEXT
+            .replace("kind = \"good\"", "kind = \"bad\"")
+            .replace("expected = \"pass\"", "expected = \"diverge\"")
+            .replace(
+                "note = \"loop edges\"",
+                "bug = \"overflow\"\nnote = \"loop edges\"",
+            );
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("expect_case is required")));
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("expect_class is required")));
+        let text = format!("{TEXT}expect_case = 1\n");
+        let errors = parse_manifest(&text, "varint", "varint").unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("expect_case is only valid")));
+    }
+
+    #[test]
+    fn rejects_corpus_line_over_request_cap() {
+        let line = "2a".repeat(abi::REQUEST_CAP + 1);
+        let errors = parse_corpus(&line, "f").unwrap_err();
+        assert_eq!(errors[0].code, "TV0004");
+        assert_eq!(errors[0].case, Some(0));
+        assert!(errors[0].message.contains("4096-byte request cap"));
     }
 }
