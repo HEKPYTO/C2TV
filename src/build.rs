@@ -79,7 +79,11 @@ fn step(
             fixture,
             None,
             level,
-            format!("{program} exited {}: {}", output.status, String::from_utf8_lossy(&output.stderr).trim()),
+            format!(
+                "{program} exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         )),
         Err(error) => errors.push(Diagnostic::new(
             diag::SPAWN,
@@ -129,7 +133,10 @@ fn rust_step(
         "harness".to_string(),
     ];
     let environment = [
-        ("CARGO_TARGET_DIR", target_dir.to_string_lossy().into_owned()),
+        (
+            "CARGO_TARGET_DIR",
+            target_dir.to_string_lossy().into_owned(),
+        ),
         (
             "CARGO_PROFILE_RELEASE_OPT_LEVEL",
             match level {
@@ -138,9 +145,16 @@ fn rust_step(
             },
         ),
     ];
-    step(fixture, Some(level), "cargo", &args, Some(crate_dir), &environment, errors);
+    step(
+        fixture,
+        Some(level),
+        "cargo",
+        &args,
+        Some(crate_dir),
+        &environment,
+        errors,
+    );
 }
-
 
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
@@ -189,7 +203,11 @@ pub fn build(dir: &Path, work: &Path, fixture: &str) -> Result<Built, Vec<Diagno
     if !errors.is_empty() {
         return Err(errors);
     }
-    let source = source_root.join("c").join("main.c").to_string_lossy().into_owned();
+    let source = source_root
+        .join("c")
+        .join("main.c")
+        .to_string_lossy()
+        .into_owned();
     let c_o0 = work.join("c_o0").join("harness");
     let c_o2 = work.join("c_o2").join("harness");
     let c_ubsan = work.join("c_ubsan").join("harness");
@@ -201,8 +219,20 @@ pub fn build(dir: &Path, work: &Path, fixture: &str) -> Result<Built, Vec<Diagno
     c_step(fixture, Level::O0, &source, &c_ubsan, true, &mut errors);
 
     let crate_dir = source_root.join("rust");
-    rust_step(fixture, Level::O0, &crate_dir, &work.join("rust_o0"), &mut errors);
-    rust_step(fixture, Level::O2, &crate_dir, &work.join("rust_o2"), &mut errors);
+    rust_step(
+        fixture,
+        Level::O0,
+        &crate_dir,
+        &work.join("rust_o0"),
+        &mut errors,
+    );
+    rust_step(
+        fixture,
+        Level::O2,
+        &crate_dir,
+        &work.join("rust_o2"),
+        &mut errors,
+    );
 
     if errors.is_empty() {
         Ok(Built {
@@ -226,7 +256,10 @@ mod tests {
     #[test]
     fn emits_full_stderr_without_truncation() {
         let long = "x".repeat(300);
-        let args = vec!["-c".to_string(), format!("printf '%s' '{long}' >&2; exit 1")];
+        let args = vec![
+            "-c".to_string(),
+            format!("printf '%s' '{long}' >&2; exit 1"),
+        ];
         let mut errors = Vec::new();
         step("f", Some(Level::O0), "sh", &args, None, &[], &mut errors);
         assert_eq!(errors.len(), 1);

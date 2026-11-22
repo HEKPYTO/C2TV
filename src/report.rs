@@ -76,7 +76,9 @@ pub struct Pipeline {
 
 fn sorted(report: &Report) -> Report {
     let mut result = report.clone();
-    result.fixtures.sort_by(|left, right| left.id.cmp(&right.id));
+    result
+        .fixtures
+        .sort_by(|left, right| left.id.cmp(&right.id));
     result.diagnostics.sort();
     result
 }

@@ -83,7 +83,13 @@ fn execute(
         } else {
             format!("cannot write request: {error}")
         };
-        return Err(Diagnostic::new(code, fixture, Some(case), Some(level), message));
+        return Err(Diagnostic::new(
+            code,
+            fixture,
+            Some(case),
+            Some(level),
+            message,
+        ));
     }
     drop(stdin);
 
@@ -222,8 +228,7 @@ mod tests {
 
     fn script(text: &str) -> PathBuf {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("c2tv-script-{}-{id}.sh", std::process::id()));
+        let path = std::env::temp_dir().join(format!("c2tv-script-{}-{id}.sh", std::process::id()));
         let _ = fs::write(&path, format!("#!/bin/sh\n{text}\n"));
         #[cfg(unix)]
         {

@@ -114,15 +114,10 @@ pub fn write_lock(root: &Path, all: &AllDigests) -> Result<(), Diagnostic> {
     let file = DigestFile {
         fixtures: all.clone(),
     };
-    let text = toml::to_string_pretty(&file).map_err(|error| {
-        digest_error(
-            "digests.toml",
-            format!("cannot encode digests: {error}"),
-        )
-    })?;
-    fs::write(root.join("digests.toml"), text).map_err(|error| {
-        digest_error("digests.toml", format!("cannot write digests: {error}"))
-    })
+    let text = toml::to_string_pretty(&file)
+        .map_err(|error| digest_error("digests.toml", format!("cannot encode digests: {error}")))?;
+    fs::write(root.join("digests.toml"), text)
+        .map_err(|error| digest_error("digests.toml", format!("cannot write digests: {error}")))
 }
 
 pub fn verify(all: &AllDigests, lock: &DigestFile) -> Vec<Diagnostic> {
@@ -224,7 +219,11 @@ mod tests {
     #[test]
     fn unreadable_inputs_and_directories_are_diagnostics() {
         let mut diagnostics = Vec::new();
-        fixture_digests(Path::new("/nonexistent/c2tv-fixture"), "f", &mut diagnostics);
+        fixture_digests(
+            Path::new("/nonexistent/c2tv-fixture"),
+            "f",
+            &mut diagnostics,
+        );
         assert_eq!(diagnostics[0].code, "TV0011");
 
         let root = std::env::temp_dir().join(format!("c2tv-unreadable-{}", std::process::id()));
