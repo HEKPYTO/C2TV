@@ -1,0 +1,6 @@
+schema = 1
+id = "sha256"
+kind = "real"
+classes = ["buf"]
+expected = "pass"
+note = "FIPS 180-4 SHA-256 digest over raw message bytes"

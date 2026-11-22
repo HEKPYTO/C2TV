@@ -1,8 +1,9 @@
 # Fixtures — truth table
 
-The release gate. Twenty correct ports and three deliberately broken ones.
-Every fixture is a Rust crate with its own tests, a C implementation, a corpus,
-and a declared verdict. `c2tv self-test` is the only release gate.
+The release gate. Twenty correct ports, three deliberately broken ones, and
+three real algorithm ports. Every fixture is a Rust crate with its own tests, a
+C implementation, a corpus, and a declared verdict. `c2tv self-test` is the
+only release gate.
 
 The paper does not name its three incorrect translations. Ours are chosen here
 and declared, so nobody attributes them to the authors.
@@ -30,11 +31,14 @@ error, never a divergence.
 |---|---|---|
 | `schema` | `1` | format version |
 | `id` | string | fixture id, equals directory name |
-| `kind` | `good` / `bad` | truth-table class |
+| `kind` | `good` / `bad` / `real` | truth-table class |
 | `classes` | `ret`, `buf`, `err` | compared fields; anything else is reported `not compared` |
-| `expected` | `pass` / `diverge` | verdict the gate must produce |
+| `expected` | `pass` / `diverge` | verdict the gate must produce; `real` must be `pass` |
 | `bug` | `overflow` / `aliasing` / `off-by-one` | required for `bad` only |
 | `note` | string | one line, why the fixture exists |
+
+Real fixtures must pass both unit tests in `src/lib.rs` and integration tests
+in `tests/` with `cargo test --offline`.
 
 Corpus: `corpus.hex`, one case per line, hex-encoded request bytes, `-` for the
 empty input. Sorted by case index.
@@ -78,6 +82,14 @@ Each bad fixture must pass its crate tests on the Rust side (the Rust code is
 internally consistent) and differ from C only on the declared case. A bad
 fixture that differs on a second case is a broken fixture, not a finding.
 
+### Real — public-spec algorithms, must show no divergence and pass their crate tests
+
+| # | id | function | classes | why it is here |
+|---|---|---|---|---|
+| 24 | `aes128` | AES-128 ECB block encrypt/decrypt | buf, err | FIPS-197 key schedule and round transforms |
+| 25 | `sha256` | SHA-256 message digest | buf | FIPS 180-4 padding boundary and long input |
+| 26 | `qoi` | QOI decode to RGBA8 and encode back | buf, err | QOI v1.0 RGB/RGBA/RUN/INDEX/DIFF/LUMA coverage and roundtrip |
+
 ## Comparison rule
 
 1. Build C at `-O0` and `-O2`; build Rust at `opt-level=0` and `opt-level=2`.
@@ -92,8 +104,9 @@ fixture that differs on a second case is a broken fixture, not a finding.
 
 ## Kill gate
 
-If the three bad fixtures cannot be separated from the twenty good ones without
-false positives, stop. The gate idea is wrong.
+If the three bad fixtures cannot be separated from the twenty good ones plus
+the three real ones without false positives, stop. The gate idea is wrong.
+The release gate is 20 good + 3 bad + 3 real; `c2tv self-test --fixtures fixtures/good`, `c2tv self-test --fixtures fixtures/bad`, and `c2tv self-test --fixtures fixtures/real` must all pass.
 
 ## Not claimed
 
