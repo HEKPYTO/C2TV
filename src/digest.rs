@@ -284,9 +284,9 @@ mod tests {
     #[test]
     fn unreadable_inputs_and_directories_are_diagnostics() {
         #[cfg(unix)]
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
+        let permissions_enforced = unsafe { libc::geteuid() } != 0;
+        #[cfg(not(unix))]
+        let permissions_enforced = true;
         let mut diagnostics = Vec::new();
         fixture_digests(
             Path::new("/nonexistent/c2tv-fixture"),
@@ -307,7 +307,18 @@ mod tests {
         }
         let mut diagnostics = Vec::new();
         fixture_digests(&root, "f", &mut diagnostics);
-        assert!(diagnostics.iter().any(|item| item.code == "TV0011"));
+        if permissions_enforced {
+            assert!(diagnostics.iter().any(|item| item.code == "TV0011"));
+        } else {
+            assert!(
+                fs::read_to_string(&file).is_ok(),
+                "root bypasses mode 000; unreadable-input assertion skipped"
+            );
+            assert!(
+                diagnostics.is_empty(),
+                "root should read mode 000 without diagnostics: {diagnostics:?}"
+            );
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

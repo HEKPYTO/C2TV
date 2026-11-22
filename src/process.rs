@@ -19,7 +19,7 @@ fn kill_group(_pid: u32) {}
 
 pub const OUTPUT_CAP: usize = 1 << 20;
 pub const BUILD_TIMEOUT: Duration = Duration::from_secs(120);
-pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const HARNESS_TIMEOUT: Duration = Duration::from_secs(10);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const ALLOWED_ENV: [&str; 5] = ["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "TMPDIR"];
@@ -33,15 +33,22 @@ pub struct Captured {
     pub status: ExitStatus,
     pub write_error: Option<String>,
 }
-pub fn sanitized(program: impl AsRef<std::ffi::OsStr>) -> Command {
+fn sanitized_with(
+    program: impl AsRef<std::ffi::OsStr>,
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Command {
     let mut command = Command::new(program);
     command.env_clear();
     for key in ALLOWED_ENV {
-        if let Some(value) = std::env::var_os(key) {
+        if let Some(value) = lookup(key) {
             command.env(key, value);
         }
     }
     command
+}
+
+pub fn sanitized(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    sanitized_with(program, |key| std::env::var_os(key))
 }
 
 fn drain(mut reader: impl Read, detach: Arc<AtomicBool>) -> (Vec<u8>, bool) {
@@ -162,16 +169,28 @@ pub fn run(
 mod tests {
     use super::*;
 
+    use std::ffi::{OsStr, OsString};
+
     #[test]
     fn sanitized_command_drops_inherited_build_variables() {
-        std::env::set_var("C2TV_TEST_INHERITED", "leak");
-        let command = sanitized("sh");
+        let variables = [
+            ("PATH", "/usr/bin:/bin"),
+            ("C2TV_TEST_INHERITED", "leak"),
+            ("RUSTFLAGS", "-D warnings"),
+        ];
+        let command = sanitized_with("sh", |key| {
+            variables
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| OsString::from(*value))
+        });
         let envs: Vec<_> = command.get_envs().collect();
-        assert!(envs.iter().any(|(key, _)| *key == "PATH"));
         assert!(envs
             .iter()
-            .all(|(key, _)| *key != "C2TV_TEST_INHERITED" && *key != "RUSTFLAGS"));
-        std::env::remove_var("C2TV_TEST_INHERITED");
+            .any(|(key, value)| { *key == "PATH" && *value == Some(OsStr::new("/usr/bin:/bin")) }));
+        assert!(envs
+            .iter()
+            .all(|(key, value)| ALLOWED_ENV.contains(&key.to_str().unwrap()) && value.is_some()));
     }
 
     #[test]
@@ -197,35 +216,69 @@ mod tests {
     fn timeout_kills_grandchildren() {
         use std::fs;
         use std::thread::sleep;
+        let ps = Command::new("ps")
+            .args(["-p", "1", "-o", "stat="])
+            .output()
+            .expect("ps is required to verify process-group kill; install procps");
+        assert!(
+            ps.status.success(),
+            "ps -p 1 failed: {}",
+            String::from_utf8_lossy(&ps.stderr)
+        );
+        let sleeper = Command::new("sleep")
+            .arg("0")
+            .status()
+            .expect("sleep is required to spawn the grandchild");
+        assert!(sleeper.success(), "sleep 0 failed");
         let pid_file =
             std::env::temp_dir().join(format!("c2tv-grandchild-{}.pid", std::process::id()));
-        let _ = fs::remove_file(&pid_file);
+        let cleanup = || {
+            let _ = fs::remove_file(&pid_file);
+        };
+        cleanup();
         let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
         let mut command = sanitized("sh");
         command.args(["-c", &script]);
-        let captured = run(&mut command, None, Duration::from_millis(200)).unwrap();
+        let captured = run(&mut command, None, Duration::from_secs(2)).unwrap();
         assert!(captured.timed_out);
         let mut pid = String::new();
-        for _ in 0..20 {
+        for _ in 0..100 {
             if let Ok(text) = fs::read_to_string(&pid_file) {
                 pid = text.trim().to_string();
-                break;
+                if !pid.is_empty() {
+                    break;
+                }
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
         }
-        assert!(!pid.is_empty());
-        for _ in 0..50 {
+        assert!(
+            !pid.is_empty(),
+            "grandchild pidfile {} stayed empty",
+            pid_file.display()
+        );
+        for _ in 0..100 {
             let output = Command::new("ps")
-                .args(["-p", &pid, "-o", "command="])
+                .args(["-p", &pid, "-o", "stat=", "-o", "command="])
                 .output()
-                .unwrap();
-            if !String::from_utf8_lossy(&output.stdout).contains("sleep") {
-                let _ = fs::remove_file(&pid_file);
+                .expect("ps is required to verify process-group kill; install procps");
+            let text = String::from_utf8_lossy(&output.stdout);
+            let line = text.lines().next().unwrap_or("").trim();
+            if line.is_empty() {
+                cleanup();
+                return;
+            }
+            let state = line.split_whitespace().next().unwrap_or("");
+            if state.starts_with('Z')
+                || state.starts_with('X')
+                || line.contains("<defunct>")
+                || !line.contains("sleep")
+            {
+                cleanup();
                 return;
             }
             sleep(Duration::from_millis(20));
         }
-        let _ = fs::remove_file(&pid_file);
-        panic!("grandchild sleep survived process-group kill");
+        cleanup();
+        panic!("grandchild sleep survived process-group kill (pid={pid})");
     }
 }

@@ -178,12 +178,12 @@ mod tests {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("c2tv-script-{}-{id}.sh", std::process::id()));
         let staged = path.with_extension("tmp");
-        let _ = fs::write(&staged, format!("#!/bin/sh\ncat >/dev/null\n{text}\n"));
-        let _ = fs::rename(&staged, &path);
+        fs::write(&staged, format!("#!/bin/sh\ncat >/dev/null\n{text}\n")).unwrap();
+        fs::rename(&staged, &path).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o700));
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
         }
         TempScript(path)
     }
@@ -207,11 +207,11 @@ mod tests {
         let errors = run(&short, &[], "f", 1, Level::O0).unwrap_err();
         assert_eq!(errors[0].code, "TV0010");
 
-        let trailing = script("dd if=/dev/zero bs=1 count=21 2>/dev/null");
+        let trailing = script("head -c 21 /dev/zero");
         let errors = run(&trailing, &[], "f", 2, Level::O0).unwrap_err();
         assert_eq!(errors[0].code, "TV0012");
 
-        let bad_status = script("perl -e 'print pack(\"Q<\",2),pack(\"Q<\",0),pack(\"V\",0)'");
+        let bad_status = script("printf '\\002\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000\\000'");
         let errors = run(&bad_status, &[], "f", 3, Level::O0).unwrap_err();
         assert_eq!(errors[0].code, "TV0015");
     }
