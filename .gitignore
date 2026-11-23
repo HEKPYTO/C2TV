@@ -12,5 +12,9 @@
 !/scripts/**
 !/.github/**
 !/.pre-commit-config.yaml
+!/action.yml
+!/.pre-commit-hooks.yaml
+!/integrations/**
+!/external/**
 target/
 **/target/
