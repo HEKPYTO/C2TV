@@ -64,7 +64,8 @@ int main(int argc, char **argv) {
 "#;
 
 fn sha256(path: &Path) -> String {
-    let bytes = fs::read(path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+    let bytes =
+        fs::read(path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -120,11 +121,13 @@ fn rust_compress(input: &[u8]) -> Vec<u8> {
 }
 
 fn rust_decompress(input: &[u8]) -> Vec<u8> {
-    miniz_oxide::inflate::decompress_to_vec_zlib(input).expect("miniz_oxide cannot decompress zlib data")
+    miniz_oxide::inflate::decompress_to_vec_zlib(input)
+        .expect("miniz_oxide cannot decompress zlib data")
 }
 
 #[test]
-fn external_miniz_and_miniz_oxide_are_independent_production_ports_behavioural_evidence_not_proof() {
+fn external_miniz_and_miniz_oxide_are_independent_production_ports_behavioural_evidence_not_proof()
+{
     let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join(VENDOR);
     for (name, expected) in [
         ("miniz.c", C_SHA256),
@@ -141,7 +144,8 @@ fn external_miniz_and_miniz_oxide_are_independent_production_ports_behavioural_e
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let work: PathBuf = std::env::temp_dir().join(format!("c2tv-miniz-{}-{stamp}", std::process::id()));
+    let work: PathBuf =
+        std::env::temp_dir().join(format!("c2tv-miniz-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&work).expect("cannot create temporary build directory");
     let source = work.join("miniz_cli.c");
     let binary = work.join("miniz_cli");
@@ -170,9 +174,18 @@ fn external_miniz_and_miniz_oxide_are_independent_production_ports_behavioural_e
         let rust_from_c = rust_decompress(&c_compressed);
         let c_from_rust = run_c(&binary, "d", &rust_compressed);
         assert_eq!(c_from_c, data, "{name}: C self-roundtrip; {EVIDENCE}");
-        assert_eq!(rust_from_rust, data, "{name}: Rust self-roundtrip; {EVIDENCE}");
-        assert_eq!(rust_from_c, data, "{name}: C-compressed to Rust-decompressed; {EVIDENCE}");
-        assert_eq!(c_from_rust, data, "{name}: Rust-compressed to C-decompressed; {EVIDENCE}");
+        assert_eq!(
+            rust_from_rust, data,
+            "{name}: Rust self-roundtrip; {EVIDENCE}"
+        );
+        assert_eq!(
+            rust_from_c, data,
+            "{name}: C-compressed to Rust-decompressed; {EVIDENCE}"
+        );
+        assert_eq!(
+            c_from_rust, data,
+            "{name}: Rust-compressed to C-decompressed; {EVIDENCE}"
+        );
     }
     let _ = fs::remove_dir_all(&work);
 }

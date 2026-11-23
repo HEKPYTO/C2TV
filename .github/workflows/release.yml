@@ -25,7 +25,7 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             tar_owner_flags: --owner=0 --group=0 --numeric-owner --format=ustar
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             tar_owner_flags: --uid=0 --gid=0 --uname= --gname= --numeric-owner --format=ustar
     env:
