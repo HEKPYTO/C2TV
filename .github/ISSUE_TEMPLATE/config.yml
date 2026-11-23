@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/HEKPYTO/C2TV/security/advisories/new
+    about: Report vulnerabilities privately through GitHub security advisories.
+  - name: Usage and integration help
+    url: https://github.com/HEKPYTO/C2TV/blob/main/integrations/README.md
+    about: Action, pre-commit, Make, and CMake adoption notes.

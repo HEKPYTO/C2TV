@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a false pass, false positive, crash, or protocol failure.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Exact command and fixture path.
+      placeholder: c2tv check --fixture fixtures/good/crc32 --json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and observed
+      description: Paste the JSON report or the diagnostic code.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Tool versions
+      description: Output of `c2tv doctor --json`.
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal reproducer
+      description: Port manifest, corpus, and C/Rust harness if shareable.
+    validations:
+      required: false

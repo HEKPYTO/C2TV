@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose an adoption, diagnostic, or corpus improvement.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What migration or CI failure does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: A fixture, measured rate, or real port that motivates it.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: The smallest change that solves the problem.
+    validations:
+      required: true
