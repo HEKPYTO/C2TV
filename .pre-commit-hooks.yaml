@@ -1,0 +1,6 @@
+- id: c2tv-check
+  name: c2tv check
+  description: 'Requires c2tv on PATH and args: [fixture, --json], where fixture is a directory containing port.toml, corpus.hex, and C/Rust harnesses, with digests.toml in it or an ancestor.'
+  entry: c2tv check --fixture
+  language: system
+  pass_filenames: false

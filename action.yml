@@ -1,0 +1,62 @@
+name: c2tv check
+description: Build c2tv and check a committed C-to-Rust validation fixture in the caller workspace.
+inputs:
+  fixture:
+    description: Fixture directory containing port.toml, corpus.hex, and the C and Rust harnesses.
+    required: true
+  args:
+    description: Extra arguments for `c2tv check`.
+    required: false
+    default: --json
+  version:
+    description: Rust toolchain version used to build c2tv.
+    required: false
+    default: "1.100.0"
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30
+      with:
+        toolchain: ${{ inputs.version }}
+        cache: false
+    - name: Check fixture and lock
+      shell: bash
+      env:
+        C2TV_FIXTURE: ${{ inputs.fixture }}
+        C2TV_WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        fixture="$(cd "$C2TV_FIXTURE" 2>/dev/null && pwd -P || true)"
+        if [[ -z "$fixture" || ! -f "$fixture/port.toml" ]]; then
+          echo "c2tv: fixture '$C2TV_FIXTURE' is missing or has no port.toml" >&2
+          exit 2
+        fi
+        workspace="$(cd "$C2TV_WORKSPACE" && pwd -P)"
+        dir="$fixture"
+        while :; do
+          if [[ -f "$dir/digests.toml" ]]; then
+            exit 0
+          fi
+          [[ "$dir" == "$workspace" || "$dir" == "/" ]] && break
+          dir="$(dirname "$dir")"
+        done
+        echo "c2tv: missing digests.toml for '$C2TV_FIXTURE'; commit a lock made by 'c2tv lock --fixtures <dir>'" >&2
+        exit 2
+    - name: Build c2tv
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        RUSTUP_TOOLCHAIN: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        cargo install --path "${{ github.action_path }}" --locked --root "$RUNNER_TEMP/c2tv-install"
+    - name: Run c2tv check
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        C2TV_FIXTURE: ${{ inputs.fixture }}
+        C2TV_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/c2tv-install/bin/c2tv" check --fixture "$C2TV_FIXTURE" $C2TV_ARGS
