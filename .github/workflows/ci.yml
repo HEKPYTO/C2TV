@@ -134,6 +134,39 @@ jobs:
       - name: Reject comments in sources
         run: ./scripts/check-comments.sh
 
+  adoption-surfaces:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+
+      - name: Build release binary
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo build --release --locked
+
+      - name: Install pre-commit
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user pre-commit
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-commit adopter hook
+        run: PATH="$PWD/target/release:$PATH" pre-commit run --config examples/adoption/.pre-commit-config.yaml --all-files
+
+      - name: Make adopter target
+        run: make -f integrations/c2tv.mk c2tv-check C2TV="$PWD/target/release/c2tv" C2TV_FIXTURE="$PWD/examples/adoption/fixtures/good/saturating_add"
+
+      - name: CMake adopter target
+        run: |
+          set -euo pipefail
+          cmake -S examples/adoption -B "$RUNNER_TEMP/adoption-cmake" -DC2TV_EXECUTABLE="$PWD/target/release/c2tv"
+          cmake --build "$RUNNER_TEMP/adoption-cmake" --target c2tv-check
+
   release-build:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
