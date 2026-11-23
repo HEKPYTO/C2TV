@@ -32,6 +32,17 @@ matched optimisation levels, compares the declared response classes, and exits
 non-zero on any unexpected verdict. Undeclared fields are reported as not
 compared. A full run takes under two minutes on an arm64 laptop.
 
+Publish measured detection rates from the same pipeline:
+
+```sh
+cargo run --offline -- bench --fixtures fixtures
+cargo run --offline -- bench --fixtures fixtures --json
+```
+
+`bench` runs the `self-test` pipeline once and reports counts plus false-positive
+and false-negative rates with explicit numerators and denominators. Tool errors
+get their own count, exit 2, and are excluded from both rates.
+
 Check one port:
 
 ```sh

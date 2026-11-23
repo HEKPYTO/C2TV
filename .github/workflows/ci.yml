@@ -90,6 +90,12 @@ jobs:
       - name: Transpile self-test
         run: cargo run --offline -- self-test --transpile --fixtures fixtures --json
 
+      - name: Bench detection rates
+        run: |
+          set -euo pipefail
+          cargo metadata --offline --locked --format-version 1 > /dev/null
+          cargo run --offline -- bench --fixtures fixtures --json
+
       - name: Fixture tamper check
         run: |
           set -euo pipefail

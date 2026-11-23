@@ -433,3 +433,29 @@ fn check_one_fixture_with_full_lock_passes() {
     assert!(stdout.contains("\"observed\":\"pass\""));
     assert!(!stdout.contains("TV0011"), "stdout={stdout}");
 }
+
+#[test]
+fn bench_publishes_rates_for_real_fixtures() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let (code, stdout, stderr) =
+        c2tv(&["bench", "--fixtures", fixtures.to_str().unwrap(), "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let counts = &value["counts"];
+    assert_eq!(counts["total"].as_u64(), Some(26));
+    assert_eq!(counts["good"].as_u64(), Some(20));
+    assert_eq!(counts["bad"].as_u64(), Some(3));
+    assert_eq!(counts["real"].as_u64(), Some(3));
+    assert_eq!(counts["true_positive"].as_u64(), Some(3));
+    assert_eq!(counts["false_negative"].as_u64(), Some(0));
+    assert_eq!(counts["true_negative"].as_u64(), Some(23));
+    assert_eq!(counts["false_positive"].as_u64(), Some(0));
+    assert_eq!(counts["tool_errors"].as_u64(), Some(0));
+    let rates = &value["rates"];
+    assert_eq!(rates["false_positive"]["numerator"].as_u64(), Some(0));
+    assert_eq!(rates["false_positive"]["denominator"].as_u64(), Some(23));
+    assert_eq!(rates["false_positive"]["rate"].as_f64(), Some(0.0));
+    assert_eq!(rates["false_negative"]["numerator"].as_u64(), Some(0));
+    assert_eq!(rates["false_negative"]["denominator"].as_u64(), Some(3));
+    assert_eq!(rates["false_negative"]["rate"].as_f64(), Some(0.0));
+}

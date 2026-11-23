@@ -1,4 +1,5 @@
 mod abi;
+mod bench;
 mod build;
 mod compare;
 mod diag;
@@ -33,6 +34,12 @@ enum Command {
     Check {
         #[arg(long)]
         fixture: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    Bench {
+        #[arg(long)]
+        fixtures: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -270,11 +277,11 @@ fn emit(pipeline: &Pipeline, json: bool) {
     }
 }
 
-fn fail_with(mut diagnostics: Vec<Diagnostic>, json: bool, root: Option<&Path>) -> i32 {
+fn failed_pipeline(mut diagnostics: Vec<Diagnostic>, root: Option<&Path>) -> Pipeline {
     if let Some(root) = root {
         normalize_paths(&mut diagnostics, root);
     }
-    let pipeline = Pipeline {
+    Pipeline {
         clang_version: build::version("clang"),
         rustc_version: build::version("rustc"),
         c2rust_version: build::probe_c2rust(),
@@ -282,10 +289,15 @@ fn fail_with(mut diagnostics: Vec<Diagnostic>, json: bool, root: Option<&Path>) 
         generated_digest: None,
         transpile: None,
         fixtures: Vec::new(),
-        diagnostics: diagnostics.clone(),
-    };
+        diagnostics,
+    }
+}
+
+fn fail_with(diagnostics: Vec<Diagnostic>, json: bool, root: Option<&Path>) -> i32 {
+    let pipeline = failed_pipeline(diagnostics, root);
+    let code = diag::exit_code(&pipeline.diagnostics);
     emit(&pipeline, json);
-    diag::exit_code(&diagnostics)
+    code
 }
 
 fn capability_diagnostics(version: Option<String>) -> Vec<Diagnostic> {
@@ -637,7 +649,7 @@ fn require_lock(root: &Path) -> Result<digest::DigestFile, Diagnostic> {
     ))
 }
 
-fn expectation_diagnostics(fixtures: &[report::FixtureReport]) -> Vec<Diagnostic> {
+pub(crate) fn expectation_diagnostics(fixtures: &[report::FixtureReport]) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for fixture in fixtures {
         if fixture.expected != fixture.observed {
@@ -889,10 +901,10 @@ fn transpile_self_test(
     (reports, version, sha256, digest)
 }
 
-fn self_test(fixtures: PathBuf, json: bool, transpile_enabled: bool) -> i32 {
+fn self_test_pipeline(fixtures: &Path, transpile_enabled: bool) -> (Pipeline, i32) {
     let mut diagnostics = Vec::new();
     let start = Instant::now();
-    let directories = fixture_dirs(&fixtures, &mut diagnostics);
+    let directories = fixture_dirs(fixtures, &mut diagnostics);
     timing("discovery", start);
     if directories.is_empty() {
         diagnostics.push(Diagnostic::new(
@@ -902,12 +914,18 @@ fn self_test(fixtures: PathBuf, json: bool, transpile_enabled: bool) -> i32 {
             None,
             "no fixtures found",
         ));
-        return fail_with(diagnostics, json, Some(&fixtures));
+        let pipeline = failed_pipeline(diagnostics, Some(fixtures));
+        let code = diag::exit_code(&pipeline.diagnostics);
+        return (pipeline, code);
     }
     let start = Instant::now();
-    let lock = match require_lock(&fixtures) {
+    let lock = match require_lock(fixtures) {
         Ok(lock) => lock,
-        Err(error) => return fail_with(vec![error], json, Some(&fixtures)),
+        Err(error) => {
+            let pipeline = failed_pipeline(vec![error], Some(fixtures));
+            let code = diag::exit_code(&pipeline.diagnostics);
+            return (pipeline, code);
+        }
     };
     timing("lock", start);
     let start = Instant::now();
@@ -966,10 +984,45 @@ fn self_test(fixtures: PathBuf, json: bool, transpile_enabled: bool) -> i32 {
         fixtures: first.fixtures,
         diagnostics: diagnostics.clone(),
     };
-    let code = diag::exit_code(&diagnostics);
+    let code = diag::exit_code(&pipeline.diagnostics);
+    (pipeline, code)
+}
+
+fn self_test(fixtures: PathBuf, json: bool, transpile_enabled: bool) -> i32 {
+    let (pipeline, code) = self_test_pipeline(&fixtures, transpile_enabled);
     emit(&pipeline, json);
     code
 }
+
+fn bench_command(fixtures: PathBuf, json: bool) -> i32 {
+    let start = Instant::now();
+    let (pipeline, code) = self_test_pipeline(&fixtures, false);
+    let elapsed = start.elapsed();
+    let counts = bench::measure(&pipeline.fixtures, &pipeline.diagnostics);
+    let exit = if counts.tool_errors > 0 {
+        2
+    } else if counts.false_positive > 0 || counts.false_negative > 0 {
+        1
+    } else {
+        code
+    };
+    let rates = bench::rates(&counts);
+    let report = bench::Report {
+        schema: 1,
+        clang_version: pipeline.clang_version,
+        rustc_version: pipeline.rustc_version,
+        c2rust_version: pipeline.c2rust_version,
+        counts,
+        rates,
+    };
+    if json {
+        print!("{}", bench::canonical(&report));
+    } else {
+        print!("{}", bench::human(&report, elapsed));
+    }
+    exit
+}
+
 fn lock(fixtures: PathBuf) -> i32 {
     let mut diagnostics = Vec::new();
     let directories = fixture_dirs(&fixtures, &mut diagnostics);
@@ -1029,6 +1082,7 @@ fn main() {
     let cli = Cli::parse();
     let code = match cli.command {
         Command::Check { fixture, json } => check(fixture, json),
+        Command::Bench { fixtures, json } => bench_command(fixtures, json),
         Command::SelfTest {
             fixtures,
             json,
