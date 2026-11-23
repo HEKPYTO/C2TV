@@ -177,6 +177,24 @@ pub const OUTPUT_LIMIT: CodeInfo = CodeInfo {
     severity: Severity::Error,
     exit_class: ExitClass::ToolError,
 };
+pub const DOCTOR_MISSING_TOOL: CodeInfo = CodeInfo {
+    code: "TV0023",
+    name: "doctor_missing_tool",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
+pub const TOOLCHAIN_DRIFT: CodeInfo = CodeInfo {
+    code: "TV0024",
+    name: "toolchain_drift",
+    severity: Severity::Warning,
+    exit_class: ExitClass::Ok,
+};
+pub const TOOLCHAIN_FILE: CodeInfo = CodeInfo {
+    code: "TV0025",
+    name: "toolchain_file",
+    severity: Severity::Error,
+    exit_class: ExitClass::ToolError,
+};
 
 pub fn truncation(
     fixture: &str,
@@ -274,6 +292,11 @@ mod tests {
             TRANSPILED_BUILD_FAILED,
             TRANSPILED_NONDETERMINISM,
             TRANSPILED_DIVERGENCE,
+            CRATE_TEST_FAILED,
+            OUTPUT_LIMIT,
+            DOCTOR_MISSING_TOOL,
+            TOOLCHAIN_DRIFT,
+            TOOLCHAIN_FILE,
         ];
         for (index, info) in codes.iter().enumerate() {
             let expected = format!("TV{:04}", index + 1);

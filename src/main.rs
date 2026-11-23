@@ -4,6 +4,7 @@ mod build;
 mod compare;
 mod diag;
 mod digest;
+mod doctor;
 mod manifest;
 mod process;
 mod report;
@@ -60,6 +61,14 @@ enum Command {
     Lock {
         #[arg(long)]
         fixtures: PathBuf,
+    },
+    Doctor {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        strict: bool,
+        #[arg(long)]
+        transpile: bool,
     },
 }
 fn fixture_dirs(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Vec<PathBuf> {
@@ -748,6 +757,17 @@ fn subset_lock(lock: &digest::DigestFile, all: &digest::AllDigests) -> digest::D
     }
 }
 
+fn doctor_command(json: bool, strict: bool, transpile: bool) -> i32 {
+    let report = doctor::collect(&doctor::SystemProber, Path::new("."), strict, transpile);
+    let code = diag::exit_code(&report.diagnostics);
+    if json {
+        print!("{}", doctor::canonical(&report));
+    } else {
+        print!("{}", doctor::human(&report));
+    }
+    code
+}
+
 fn check(fixture: PathBuf, json: bool) -> i32 {
     let mut diagnostics = Vec::new();
     let directories = fixture_dirs(&fixture, &mut diagnostics);
@@ -1089,6 +1109,11 @@ fn main() {
             transpile,
         } => self_test(fixtures, json, transpile),
         Command::Transpile { fixture, json } => transpile_cli(fixture, json),
+        Command::Doctor {
+            json,
+            strict,
+            transpile,
+        } => doctor_command(json, strict, transpile),
         Command::Lock { fixtures } => lock(fixtures),
     };
     std::process::exit(code);

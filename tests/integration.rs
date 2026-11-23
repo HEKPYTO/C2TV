@@ -459,3 +459,36 @@ fn bench_publishes_rates_for_real_fixtures() {
     assert_eq!(rates["false_negative"]["denominator"].as_u64(), Some(3));
     assert_eq!(rates["false_negative"]["rate"].as_f64(), Some(0.0));
 }
+
+#[test]
+fn doctor_strict_json_reports_toolchain() {
+    let root = sandbox("doctor");
+    let output = Command::new(env!("CARGO_BIN_EXE_c2tv"))
+        .args(["doctor", "--json", "--strict"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr={stderr}\nstdout={stdout}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["tool"], "c2tv");
+    assert_eq!(value["c2tv_version"], env!("CARGO_PKG_VERSION"));
+    assert!(value["rustc"]["present"].as_bool().unwrap());
+    assert!(value["cargo"]["version"].as_str().is_some());
+    assert!(value["clang"]["present"].as_bool().unwrap());
+    assert!(value["c2rust"].is_object());
+    assert!(value["diagnostics"].is_array());
+    assert!(value["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|diagnostic| diagnostic["severity"] != "error"));
+    assert!(!stdout.contains(&root.display().to_string()));
+    fs::remove_dir_all(&root).unwrap();
+}

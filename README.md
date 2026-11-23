@@ -84,6 +84,22 @@ independent builds. A missing or mismatched transpiler is exit 2, never a skip.
 `cargo test` skips the two transpile integration tests when `c2rust` is absent;
 `self-test --transpile` fails closed instead.
 
+Report toolchain drift without changing the work tree:
+
+```sh
+cargo run --offline -- doctor
+cargo run --offline -- doctor --json
+cargo run --offline -- doctor --strict --transpile --json
+```
+
+`doctor` reports the c2tv, rustc, cargo, clang, and c2rust versions and the
+`rust-toolchain.toml` channel. It only runs `--version` probes and reads the
+toolchain file. Missing rustc or clang is exit 2 with a typed diagnostic.
+Channel drift is a warning and exits 0 by default; `--strict` makes it exit 2.
+An absent c2rust is informational unless `--transpile` is set, which requires
+exactly `transpile 0.22.1` and exits 2 otherwise. JSON has fixed field order and
+carries no paths or times. CI runs the strict transpiler form before tests.
+
 Exit codes: `0` all expected verdicts, `1` divergence or expectation failure,
 `2` tool error. A missing compiler, malformed manifest, corrupt lock, or protocol
 violation is never reported as a divergence.
