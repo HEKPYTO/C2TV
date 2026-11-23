@@ -142,6 +142,8 @@ GitHub Actions:
 
 Pre-commit: add the `c2tv-check` hook from `.pre-commit-hooks.yaml`.
 Make and CMake: see [`integrations/README.md`](integrations/README.md).
+A complete caller fixture and released-tag workflow live in
+[`examples/adoption/`](examples/adoption/README.md).
 
 Every adopter authors `port.toml`, `corpus.hex`, and matching C/Rust harnesses,
 then commits `digests.toml`. C2TV is not a generic binary diff.
