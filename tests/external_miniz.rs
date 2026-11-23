@@ -152,7 +152,7 @@ fn external_miniz_and_miniz_oxide_are_independent_production_ports_behavioural_e
     fs::write(&source, C_CLI).expect("cannot write C CLI source");
     let build = Command::new("clang")
         .arg("-O2")
-        .arg("-std=c99")
+        .arg("-std=gnu99")
         .arg("-I")
         .arg(&vendor)
         .arg(&source)
