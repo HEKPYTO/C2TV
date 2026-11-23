@@ -1,0 +1,145 @@
+name: Release (locked inputs; archives normalized; host binaries not bit-identical)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to release"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            tar_owner_flags: --owner=0 --group=0 --numeric-owner --format=ustar
+          - os: macos-14
+            target: aarch64-apple-darwin
+            tar_owner_flags: --uid=0 --gid=0 --uname= --gname= --numeric-owner --format=ustar
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      ARCHIVE: c2tv-${{ github.event.inputs.tag || github.ref_name }}-${{ matrix.target }}.tar.gz
+    steps:
+      - name: Validate tag
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v*) ;;
+            *) echo "release requires a v* tag (got: $TAG)" >&2; exit 1 ;;
+          esac
+
+      - name: Check out tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Verify c2tv --version
+        run: |
+          set -euo pipefail
+          version="$(target/release/c2tv --version)"
+          printf '%s\n' "$version"
+          expected="c2tv ${TAG#v}"
+          if [ "$version" != "$expected" ]; then
+            echo "expected $expected, got $version" >&2
+            exit 1
+          fi
+
+      - name: Package deterministic archive
+        env:
+          TAR_OWNER_FLAGS: ${{ matrix.tar_owner_flags }}
+        run: |
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          mkdir dist
+          cp target/release/c2tv LICENSE README.md "$stage/"
+          chmod 0644 "$stage/LICENSE" "$stage/README.md"
+          chmod 0755 "$stage/c2tv"
+          TZ=UTC touch -t 198001010000 "$stage/LICENSE" "$stage/README.md" "$stage/c2tv"
+          tar -cf - $TAR_OWNER_FLAGS -C "$stage" LICENSE README.md c2tv | gzip -n -9 > "dist/$ARCHIVE"
+          (
+            cd dist
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+            else
+              shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+            fi
+          )
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: c2tv-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: c2tv-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        run: |
+          set -euo pipefail
+          for target in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+            archive="c2tv-$TAG-$target.tar.gz"
+            test -f "dist/$archive"
+            test -f "dist/$archive.sha256"
+          done
+          shopt -s nullglob
+          archives=(dist/*.tar.gz)
+          checksums=(dist/*.sha256)
+          test "${#archives[@]}" -eq 2
+          test "${#checksums[@]}" -eq 2
+          (cd dist && sha256sum -c ./*.sha256)
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets=()
+          for target in x86_64-unknown-linux-gnu aarch64-apple-darwin; do
+            archive="c2tv-$TAG-$target.tar.gz"
+            assets+=("dist/$archive" "dist/$archive.sha256")
+          done
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if ! gh release create "$TAG" --title "$TAG" --target "$(git rev-parse HEAD)" --generate-notes; then
+              gh release view "$TAG" >/dev/null 2>&1 || exit 1
+            fi
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber

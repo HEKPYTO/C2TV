@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust toolchain from rust-toolchain.toml
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
@@ -124,3 +124,36 @@ jobs:
 
       - name: Reject comments in sources
         run: ./scripts/check-comments.sh
+
+  release-build:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+
+      - name: Fetch dependencies
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Verify c2tv --version
+        run: |
+          set -euo pipefail
+          version="$(target/release/c2tv --version)"
+          printf '%s\n' "$version"
+          printf '%s\n' "$version" | grep -Eq '^c2tv [0-9]+\.[0-9]+\.[0-9]+'

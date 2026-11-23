@@ -115,6 +115,14 @@ fn c2tv(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+#[test]
+fn version_flag_reports_package_version() {
+    let (code, stdout, stderr) = c2tv(&["--version"]);
+    assert_eq!(code, 0, "stderr={stderr}\nstdout={stdout}");
+    assert_eq!(stdout.trim(), format!("c2tv {}", env!("CARGO_PKG_VERSION")));
+    assert!(stderr.is_empty(), "stderr={stderr}");
+}
+
 fn probe_c2rust(program: &str) -> Result<bool, String> {
     match Command::new(program)
         .args(["transpile", "--version"])
