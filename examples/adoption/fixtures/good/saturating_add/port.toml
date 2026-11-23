@@ -1,0 +1,6 @@
+schema = 1
+id = "saturating_add"
+kind = "good"
+classes = ["ret"]
+expected = "pass"
+note = "i32 saturating addition with defined boundary results."

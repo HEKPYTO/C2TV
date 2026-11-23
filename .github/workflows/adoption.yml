@@ -1,0 +1,10 @@
+name: adoption
+"on": [push, pull_request]
+jobs:
+  adoption:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: HEKPYTO/C2TV@v0.1.0
+        with:
+          fixture: examples/adoption/fixtures/good/saturating_add

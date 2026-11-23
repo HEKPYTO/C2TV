@@ -1,0 +1,7 @@
+repos:
+  - repo: https://github.com/HEKPYTO/C2TV
+    rev: v0.1.0
+    hooks:
+      - id: c2tv-check
+        args: [examples/adoption/fixtures/good/saturating_add, --json]
+        pass_filenames: false

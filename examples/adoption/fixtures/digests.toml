@@ -1,0 +1,8 @@
+[fixtures.saturating_add]
+"c/main.c" = "731558e9da9a6395ab32a83a46811aa2d92b9b463cf11f2d81d6e840448dcefd"
+"corpus.hex" = "50d26a355b95a8a5f8fe84d2f77a0d79fbd254ad055880b32cbff79487b4ee99"
+"port.toml" = "cd3f357e1261860b4315ddc857aade38199af5c27ddda739825ed133d8c9dbe9"
+"rust/Cargo.toml" = "f5b38596437f461fe7910b456b42fe7f10cf3211c051b1f1c580629f53333190"
+"rust/src/lib.rs" = "e38d44ff322813049dd0879b95f251915ee5b2b9f52058b1069826d19a4a7d42"
+"rust/src/main.rs" = "7b0784badcf993dad87ac7061ae3902f4b4718750cab2691b0cf48cdd3d8d0dc"
+"rust/tests/cases.rs" = "2cd8c443ed77c2125c2a258c24aa91fbe8de6ec219bfe1a326c5f5cfd2b8ef0e"

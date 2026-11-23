@@ -16,5 +16,6 @@
 !/.pre-commit-hooks.yaml
 !/integrations/**
 !/external/**
+!/examples/**
 target/
 **/target/
