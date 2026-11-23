@@ -43,6 +43,19 @@ cargo run --offline -- bench --fixtures fixtures --json
 and false-negative rates with explicit numerators and denominators. Tool errors
 get their own count, exit 2, and are excluded from both rates.
 
+Measured on the shipped corpus:
+
+| Metric | Count | Denominator |
+|---|---:|---:|
+| True positives | 3 | 3 broken ports |
+| False negatives | 0 | 3 broken ports |
+| False positives | 0 | 23 good + real ports |
+| True negatives | 23 | 23 good + real ports |
+| Tool errors | 0 | 26 fixtures |
+
+These are corpus-specific rates, not a population estimate. `bench` exits 1 on
+any false positive or false negative and 2 on any tool error.
+
 Check one port:
 
 ```sh
@@ -87,6 +100,36 @@ The paper does not name its three incorrect translations. Ours are declared in
 [`fixtures/README.md`](fixtures/README.md), with the harness ABI, corpus format,
 diagnostic codes, and comparison rules.
 
+## External validation
+
+`external/miniz` checks miniz 3.1.0 (vendored, MIT, hashes pinned) against
+`miniz_oxide` 0.9.1, its production Rust port. Six deterministic inputs exercise
+24 assertions: C self-roundtrip, Rust self-roundtrip, C-compressed to
+Rust-decompressed, and Rust-compressed to C-decompressed. Run it with:
+
+```sh
+cargo test --offline --test external_miniz
+```
+
+This is behavioural evidence on an independent production implementation, not a
+proof and not an endorsement.
+
+## Adoption
+
+GitHub Actions:
+
+```yaml
+- uses: HEKPYTO/C2TV@v0.1.0
+  with:
+    fixture: path/to/fixture
+```
+
+Pre-commit: add the `c2tv-check` hook from `.pre-commit-hooks.yaml`.
+Make and CMake: see [`integrations/README.md`](integrations/README.md).
+
+Every adopter authors `port.toml`, `corpus.hex`, and matching C/Rust harnesses,
+then commits `digests.toml`. C2TV is not a generic binary diff.
+
 ## What it catches
 
 - Behavioural divergence between a C function and its Rust port on a declared
@@ -94,7 +137,11 @@ diagnostic codes, and comparison rules.
 - Signed-integer overflow in C, through a UBSan lane attached as evidence.
 - Nondeterministic reports, unpinned fixture inputs, and malformed fixtures.
 
-## What it does not catch
+## Limitations and non-soundness contract
+
+A pass means no observed divergence on the declared corpus and comparison
+classes at the tested optimisation levels. It says nothing about unobserved
+inputs, and it is not a proof of equivalence.
 
 - Refinement or soundness. Passing the gate is not proof of equivalence.
 - Whole-program equivalence, C++, or FFI-heavy crates.
@@ -107,6 +154,20 @@ Every check path runs with `--offline`; no network fetch. Fixtures are trusted
 code and may still open sockets themselves. The report records
 compiler versions, `c2rust` availability, and sha256 digests of fixture inputs.
 The lock file makes input drift fail closed.
+
+## Releases
+
+Tags matching `v*` build `--locked` binaries on Ubuntu 24.04 x86_64 and macOS 15
+arm64. Archives use normalized metadata and `gzip -n`, and each release publishes
+the binary, `LICENSE`, `README.md`, and a sha256 file. Inputs and archives are
+locked; binaries are not guaranteed bit-identical across hosts, so compare the
+published checksums.
+
+## Community
+
+Apache-2.0. Contributions through GitHub issues and pull requests. Report
+vulnerabilities through GitHub security advisories. Every release claim stays
+within the measured evidence above.
 
 ## Licence
 
